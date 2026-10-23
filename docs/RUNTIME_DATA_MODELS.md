@@ -4214,7 +4214,8 @@ the controls and the table are in the Item Editor's
   `LootExplosion`, `CA_playerItemDrop`, `CreateItemDropInstance` and sites in
   unnamed functions (one region also calls `RemoveItemFromMap`). (A byte
   scan for call sites; the "nearest symbol" of a site may be a preceding
-  function.)
+  function.) What `LootExplosion` does with those two calls, putting a Chaos
+  Tower floor's held loot back on the ground, is in §16.12.
 - **Static reading** (2026-10-04, our own words; recorded when ForgePact's
   creation guard was designed and not re-read since): `CA_playerItemDrop`,
   which puts a co-op peer's dropped item on this client's ground, builds that
@@ -4253,6 +4254,75 @@ the controls and the table are in the Item Editor's
 
 [loot announcements, Live procedure 2](../ForgePact/docs/loot-announcement-research.md#live-procedure-2),
 [loot announcements, Live procedure 3](../ForgePact/docs/loot-announcement-research.md#live-procedure-3)
+
+### 16.12 The Chaos Tower's loot burst: a floor's drops wait for its end
+
+Every claim in this section is a **Static reading** (2026-10-23, local Ghidra
+project, the build the decompile index labels `498d588550d8`, our own words)
+unless it says inference or not established. None of it has been measured
+live yet; ForgePact #227's Live procedure 1 is the session meant to.
+
+- **Static reading: what is collected.** `LootGroundInit`, which every new
+  ground item passes through (§16.11), has a branch for the Chaos Tower. It
+  applies when the room's name starts with the tower's prefix (the same test
+  `IsChaosTower` makes) or when a protected value, `gDataProtected[12]`
+  (§5.1), reads true; the meaning of that protected value is **not
+  established**. Two rooms are excepted: `Chaos_Tower_Boss_1` (137) and
+  `Chaos_Tower_xLobby` (148) keep their drops on the floor. And the branch
+  applies only while the flag behind `Controller_obj.lootExplosionGiven`
+  reads false.
+- **Static reading: what is held.** In that branch the new ground item does
+  not stay on the floor. The game builds an `s_LootExplosionData` struct with
+  two fields, `itemInstance` (the item struct itself, a reference rather than
+  a copy) and `isPlayerDrop`, and appends it to
+  `Controller_obj.lootExplosionList`, a plain ds_list read directly. That the
+  call after the append destroys the ground instance is **inference**: the
+  same runtime routine destroys a dialog's instance elsewhere. One item-kind
+  test can exempt an item from the branch; which kinds it exempts was not
+  read and is **not established**. Nothing tests `isPlayerDrop` before the
+  append, so an item the player drops from the bag on a tower floor is
+  collected as well.
+- **Static reading: protected keys.** `Controller_obj.lootExplosionGiven` and
+  `Controller_obj.lootExplosionGold` each hold a protected-store key, not the
+  value itself, the same pattern as the monster values of §13.7: reading the
+  variable directly returns the key.
+- **Static reading: the burst.** `LootExplosion` first sets
+  `lootExplosionGiven` true, drops the gold the floor held, and then, for each
+  list entry, calls `LootGroundDrop` around a given point (a new
+  `Loot_Ground_obj` whose `itemInstance` is set to the entry's item struct,
+  with no `CreateItemNew` for that item) and then `LootGroundInit` on the new
+  ground item with a second argument of `true`, and finally clears the list.
+  `LootGroundDrop`'s own body also calls `LootGroundInit`; whether both calls
+  run for one item is **not established**.
+- **Static reading: who bursts it.** `LootExplosion` has two direct callers
+  (found by a byte scan for call sites, with positive controls, since the MCP
+  callers table was empty): the closure SDK-named
+  `gml_Script_anon@1312@gml_Object_Spawn_Next_obj_Create_0`, which reads
+  `chaosTowerFloorFinished`, `chaosTowerIsLastFloor`, `chaosTowerFloor`,
+  `chaosTowerFloorList`, `nextFloorType` and `nextFloorNumber` (so the burst
+  comes when a floor is finished), and `WormholeGiveReward`. Whether a
+  Wormhole reward uses the same held list is **not established**.
+- **Static reading: the reset.** `Controller_obj`'s closure `anon@16838`
+  clears `lootExplosionList` and resets `lootExplosionGold`,
+  `chaosTowerFloor`, `chaosTowerSpawnZone`, `chaosTowerStarted`,
+  `chaosTowerBossState`, `lootExplosionGiven` (to false) and
+  `chaosTowerRift`. That it is what `m_ChaosTowerReset` holds (§14.3) is
+  **inference**, as is the S10 notes' earlier-build `anon@16294` being the
+  same closure.
+- **Static reading: not the cause.** `EnemyDestroyChaosTower` applies the
+  tower's death effects and makes no item call. The tower's reward, near
+  `Chaos_Tower_NPC_obj`'s code, gives an item through `DropItemHeroic` and a
+  drop table; in which room is **not established**.
+- **Inference, until ForgePact #227's Live procedure 1: what ForgePact's
+  creation guard does with it.** The guard (§16.11's last bullet) passes a
+  ground item only when the game built its struct through `CreateItemNew`
+  this frame or the last. A tower floor's drop is built through
+  `CreateItemNew` when it first drops, but that ground item is removed into
+  the list; the item that reaches the ground at the burst is the same struct,
+  frames or minutes later, with no new `CreateItemNew`. So the guard holds it
+  as a bag drop (`held-bag-drop`) and no line appears.
+
+[loot announcements, Chaos Tower (#227)](../ForgePact/docs/loot-announcement-research.md#chaos-tower-227)
 
 ---
 
