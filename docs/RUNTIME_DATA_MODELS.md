@@ -5592,6 +5592,39 @@ words; nothing here quotes the game's code.
   - **Faster Cast Rate's 106** read 54, 158 and 54 in one command file
     around `statadd castrate 100` and back to 0: +104, not +100.
   [Mark 1 Stats live 3 results](../ForgePact/docs/mark1-set-research.md#stats-live-3-results)
+- **The talent screen's page** (ForgePact's Mark 1, Amendment 8,
+  2026-10-23):
+  - **Measured** (Stats live 3, `merc-page`): on the talent screen's
+    Mercenary tab the rows ask the dispatcher with the same objects as on
+    the Player tab (`UI_Talent_Screen_Attribute_obj`,
+    `UI_Button_Talent_Player_obj`), argument 0 read 1 on both pages, and
+    the originals were the mercenary's own (36 12527, 92 5114, 97 86, 42
+    31, the numbers `Mercenary_obj`'s own asks read). So neither the asker's
+    object nor argument 0 tells the sheet's two pages apart.
+    [Mark 1 Stats live 3 results](../ForgePact/docs/mark1-set-research.md#stats-live-3-results)
+  - **Static reading** (the hub's ghidra MCP decompiled
+    `UiATalentsPlayer`, `UiATalentsMercenary` and `close_talents`; in our
+    own words): the screen's top tabs are UI actions, and each page is its
+    own screen object. The Player tab's action does nothing when a
+    `UI_Talent_Screen_obj` already exists; otherwise it closes the talent
+    screens and creates a `UI_Talent_Screen_obj`, passing on the old
+    screen's local and online player. The Mercenary tab's action does the
+    same with `UI_Mercenary_Talents_obj` and then sets up the mercenary's
+    talent buttons on it. `close_talents` destroys every instance of
+    `UI_Talent_Screen_obj`, `UI_Incarnation_Board_obj` and
+    `UI_Mercenary_Talents_obj`. So the page on show is whichever screen
+    object has an instance: the player's page is an instance of
+    `UI_Talent_Screen_obj` and none of `UI_Mercenary_Talents_obj`. That T
+    opens the screen as a `UI_Talent_Screen_obj` is inferred from Stats
+    live 3 (T opened on the Player tab), not read. The Hero and Ether tabs
+    (`UiATalentsIncarnation`, `UiATalentsEther`) were not read.
+    `UiAMercenaryDischarge` (sending the mercenary away) has one data
+    reference through the MCP: where its button sits is **not observed**.
+  - Mark 1 answers a talent-screen asker only when, read at that call,
+    `UI_Talent_Screen_obj` counts at least one instance and
+    `UI_Mercenary_Talents_obj` none; whether that keeps the Mercenary tab at
+    the game's values in play is **not measured yet** (Stats live 4).
+  [Mark 1 static reading after Stats live 3](../ForgePact/docs/mark1-set-research.md#static-reading-after-stats-live-3)
 - **Not established:**
   - which line the game lights at 3 and at 4 pieces for its own sets (the
     one measured case: with 2 pieces counted, Zealot's Prophecy's first line
