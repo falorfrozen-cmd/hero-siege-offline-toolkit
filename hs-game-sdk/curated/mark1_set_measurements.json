@@ -1423,6 +1423,90 @@
         "fcr_reads": "statask 106: 54, 158 (castrate 100), 54"
       },
       "source": "ForgePact docs/mark1-set-research.md (Stats live 3 results, Stats live 3 decision); docs/RUNTIME_DATA_MODELS.md 16.13; forgepact-166-mark1-set-playtest2-live-3.md, not tracked"
+    },
+    "live4": {
+      "status": "measured",
+      "date": "2026-10-23",
+      "procedure": "Stats live procedure 4 of the 2026-10-22 playtest (ForgePact#166): the talent screen's page rule on the Player and Mercenary tabs, and the dispatcher's Defense (92) and PDR (97) asked with the player's own self while struck, four pieces worn and the switch on, on save slot 14 Sorak (White Mage) with Mana Orb (Q) and Soul Spurn (R) unbound, 08:04 to 08:16 UTC, with the hub's x64dbg MCP attached from D1 (after S3) to D2 (before S7); saves restored clean at the end.",
+      "research_dll_sha256": "56b8739b51a325065606207f3a83b0b4af168347beb77b3659d2c33837df7aa7",
+      "forgepact_commit": "b44c1e3",
+      "summary": "15 checks: 14 pass, 1 fail. Required 10 of 10 pass; validity dbg-getters and hit-control pass, merc-away fail (not attempted: the session's permission classifier refused the click on Discharge Mercenary; not a game result); research bonus-def-hit and bonus-pdr-hit pass.",
+      "bar": "row 0: 0,0 darkOath, 0,2 chainOfHolyLight, 0,4 healingZone (252, E); Mana Orb (Q) and Soul Spurn (R) unbound by the operator through the bar editor at S0, Y empty; auto talents=-/252/-/- free=-/0/-/-",
+      "checks": {
+        "dll-hash": {
+          "verdict": "pass",
+          "observed": "lease dll_sha256 56b8739b51a325065606207f3a83b0b4af168347beb77b3659d2c33837df7aa7"
+        },
+        "control": {
+          "verdict": "pass",
+          "observed": "pong (YYTK 4.0.1)"
+        },
+        "marker": {
+          "verdict": "pass",
+          "observed": "research build; cost=drain drain=1.00 drained=0 sheet=0 sheet-left=0 sheet-unread=0; S0b install=installed, no refused line"
+        },
+        "dbg-control": {
+          "verdict": "pass",
+          "observed": "797 lines over a 10 s idle at a 12.6 ms baseline; instrument proven by the frame counter (38143 to 38287, no answer at the hold, 38470); silent once after a single-step exception, re-enabled before any candidate reading, logging through every later window"
+        },
+        "others-control": {
+          "verdict": "pass",
+          "observed": "switch off, the sheet's bonusothers: 26 entries"
+        },
+        "no-leak": {
+          "verdict": "pass",
+          "observed": "every Mercenary_obj, Companion_obj, White_Mage_Healing_Zone_obj, Zombie_Passive_obj, Legion_Skeleton(_Archer)_Passive_obj and Controller_obj entry of S2, S3 and S6 X->X"
+        },
+        "sheet-life": {
+          "verdict": "pass",
+          "observed": "36:UI_Talent_Screen_Attribute_obj 4901->5651 on, 4901->4901 off"
+        },
+        "sheet-defense": {
+          "verdict": "pass",
+          "observed": "92:UI_Talent_Screen_Attribute_obj 7056->7556, 97: 21->41; Defensive sub-tab Defense 7556, PDR 41%"
+        },
+        "merc-page": {
+          "verdict": "pass",
+          "observed": "Mercenary page (Life 12527); every talent-screen entry X->X: 36 12527, 92 5114, 97 86, 42 31, 2:UI_Button_Talent_Player_obj 0; sheet-left 34 -> 14713"
+        },
+        "page-back": {
+          "verdict": "pass",
+          "observed": "Player page again after 2 s on the Mercenary tab; 36:UI_Talent_Screen_Attribute_obj 4901->5651"
+        },
+        "dbg-getters": {
+          "verdict": "pass",
+          "observed": "statask 92,97: one df and one pd line with one self in town and with a new self on arrival in Outskirts of Inoya"
+        },
+        "merc-away": {
+          "verdict": "fail",
+          "observed": "not attempted: the Discharge Mercenary button was found on the Mercenary page, the click was refused by the session's permission classifier before it was sent; S6 bonusothers still lists Mercenary_obj; not a game result"
+        },
+        "hit-control": {
+          "verdict": "pass",
+          "observed": "S6: four sc_hurt (hu) lines with the room's reference self"
+        },
+        "bonus-def-hit": {
+          "verdict": "pass",
+          "observed": "one df line with the reference self in S6 (not next to a hu line) while bonusread 92=7056->7556"
+        },
+        "bonus-pdr-hit": {
+          "verdict": "pass",
+          "observed": "four pd lines with the reference self in S6, each right after a hu line, while bonusread 97=21->41"
+        }
+      },
+      "dispatcher_askers": {
+        "struck": "S6, four pieces, switch on: four sc_hurt calls with the player's self, each followed by a PDR (97) ask with the player's self; one Defense (92) ask with the player's self in the window, not next to a hit",
+        "other_self": "25 df and 6 pd lines with one other self in S6, beside Mercenary_obj 92 and 97 asks in bonusothers (31 and 8), left as the game answered them",
+        "sheet_pages": "Mercenary tab: talent-screen asks left at the game's values; Player tab again: answered"
+      },
+      "observed_not_explained": [
+        "S1 switch off: set=full on the first line, pieces=0 on the second (pieces=4 with the switch on)",
+        "sheet-left=34 at the end of S2, before any Mercenary tab; sheet=28199 there",
+        "S3a: sheet rose 28199 -> 31808 while sheet-left rose 34 -> 14713",
+        "S3b: sheet-left rose 14713 -> 22746, but bonusothers listed no talent-screen entry with the mercenary's originals",
+        "id 38's original read 49 in S5's bonusread and 140 in S6's (answered 74 and 165)"
+      ],
+      "source": "ForgePact docs/mark1-set-research.md (Stats live 4 results, Stats live 4 decision); docs/RUNTIME_DATA_MODELS.md 16.13; forgepact-166-mark1-set-playtest2-live-4.md, not tracked"
     }
   }
 }

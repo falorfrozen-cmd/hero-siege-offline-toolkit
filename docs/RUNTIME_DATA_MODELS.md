@@ -5592,6 +5592,25 @@ words; nothing here quotes the game's code.
   - **Faster Cast Rate's 106** read 54, 158 and 54 in one command file
     around `statadd castrate 100` and back to 0: +104, not +100.
   [Mark 1 Stats live 3 results](../ForgePact/docs/mark1-set-research.md#stats-live-3-results)
+- **Measured 2026-10-23, Stats live 4** (ForgePact's Mark 1, the same
+  character and instruments, Y left empty, all four pieces worn and the set's
+  switch on, in Outskirts of Inoya with the mercenary still hired; it was
+  not sent away: the agent session's permission classifier refused the
+  click on "Discharge Mercenary", not the game):
+  - **When an enemy strikes the player** (four hits), `sc_hurt` runs with
+    the player as self and each hit is followed by an ask for the player's
+    97 with the player as self, as in Stats live 3; this time with Mark 1
+    answering 97 21->41 in the same window.
+  - **The player's 92 is asked with the player as self** while it fights:
+    once in the struck window, with Mark 1 answering 92 7056->7556. That
+    ask did not sit next to a hit, so which game event asked was not read;
+    the static reading (above) puts it in the player's collision with an
+    enemy projectile, and whether these hits were projectiles was not read.
+  - The logpoints read each call's self, not the answer it got; life read
+    full throughout, so how much damage the hits dealt was not read.
+  - **Another self asked 92 and 97 again** (25 and 6 times), beside
+    `Mercenary_obj`'s own 92 and 97 asks, all left as the game answered.
+  [Mark 1 Stats live 4 results](../ForgePact/docs/mark1-set-research.md#stats-live-4-results)
 - **The talent screen's page** (ForgePact's Mark 1, Amendment 8,
   2026-10-23):
   - **Measured** (Stats live 3, `merc-page`): on the talent screen's
@@ -5623,9 +5642,15 @@ words; nothing here quotes the game's code.
     reference through the MCP: where its button sits is **not observed**.
   - Mark 1 answers a talent-screen asker only when, read at that call,
     `UI_Talent_Screen_obj` counts at least one instance and
-    `UI_Mercenary_Talents_obj` none; whether that keeps the Mercenary tab at
-    the game's values in play is **not measured yet** (Stats live 4).
-  [Mark 1 static reading after Stats live 3](../ForgePact/docs/mark1-set-research.md#static-reading-after-stats-live-3)
+    `UI_Mercenary_Talents_obj` none. That this keeps the Mercenary tab at
+    the game's values is **measured** (Stats live 4, `merc-page`,
+    `page-back`): on the Mercenary tab every talent-screen ask read answer =
+    original on the mercenary's numbers (36 12527, 92 5114, 97 86, 42 31),
+    and back on the Player tab 36 read 4901->5651 again. Live 4 measured
+    that effect, not the mechanism: that the page on show is whichever
+    screen object has an instance stays the static reading above.
+  [Mark 1 static reading after Stats live 3](../ForgePact/docs/mark1-set-research.md#static-reading-after-stats-live-3),
+  [Mark 1 Stats live 4 results](../ForgePact/docs/mark1-set-research.md#stats-live-4-results)
 - **Not established:**
   - which line the game lights at 3 and at 4 pieces for its own sets (the
     one measured case: with 2 pieces counted, Zealot's Prophecy's first line
