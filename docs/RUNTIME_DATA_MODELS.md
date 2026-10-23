@@ -4474,9 +4474,10 @@ paraphrased; no listing is reproduced here. Each label says which.
   until the hidden flag (base-info field 40) is clear and the rarity
   (field 27) is 7 or 10 (§ 13.4, "The pick"). Nothing in it tests the
   entry's type; the type goes from the entry to the placement unchanged. So
-  a potion entry (type 18) that passes those two tests would drop exactly
-  like any other Angelic or Unholy item. **Static reading** (2026-10-23,
-  ForgePact #229).
+  a potion entry (type 18) that passes those two tests reaches the
+  placement call exactly like any other Angelic or Unholy entry; what the
+  placement does with a type-18 entry was **not read**. **Static reading**
+  (2026-10-23, ForgePact #229).
 - **The placement's parameters carry no type.** `CreateDefaultParams` takes
   three values (the sub, with a fallback when it is absent, the base index
   and a unique flag) and returns `{j, b, c}`, with no type in it; the roll
@@ -4514,6 +4515,9 @@ paraphrased; no listing is reproduced here. Each label says which.
   validated candidates; the extra one could be the potion, a repeat or an
   Angelic the table lacks, which is a hint, not a reading. Do not decompile
   the builder whole again; ForgePact #229's live session measures the list.
+  A potion found in that list answers "the game's roll can pick it", not
+  "vanilla drops it": the game's placement of a type-18 entry was not read,
+  and ForgePact's own spawn goes through a different route.
 - **ForgePact's own pool rejected potions before #229.** From the slider's
   first release (v1.3.14) ForgePact's `BuildAngelicPool` threw out every
   `kAngelicBases` row of type 18, with the reason `potion`, before its three
