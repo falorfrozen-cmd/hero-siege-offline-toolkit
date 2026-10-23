@@ -3520,7 +3520,7 @@ with a hash manifest.
 53. **Loot announcements (`lootann`, #17, off by default, 2026-10-04) show ForgePact's own red `SERVER:` line, not the game's announcement, and count an item only when the game has just built it.**
     - **The shipped route is `server`.** The line is `ChatAddServerMessage` by name with `<character> found <item name>`, so it reads `SERVER: Sorak found Headhunter` in red: not the game's own online text, colour or sender. The game's own path (the ground item's `anon@1138` closure, `method`) was never seen to run offline, and the probe could not name any `anon@` method on the ground item in two sessions (Live procedure 3: each index read as -1), so whether it can be invoked offline is not established. `netsend` and `chatadd` refused with the one item argument supplied. A plain `ChatAddMessage` line without the prefix is a possible follow-up.
     - **Bag drops and re-drops are held by the creation guard, measured once.** A ground item counts only when its item struct was noted from `CreateItemNew` in that frame or the one before. Live procedure 3 (2026-10-04) measured one bag drop of one item held (`held-bag-drop` +1, no line) and 215 natural drops passing. Several items dropped at once, a stack, and a drop in the frame of a pickup were not tried. The guard would announce a bag drop again if the game ever put a copy built through `CreateItemNew` on the ground; the struct that reaches the ground is not established (`docs/RUNTIME_DATA_MODELS.md` § 16.11).
-    - **A Chaos Tower floor's drops are announced when the floor's end lands them, not at the kill (ForgePact #227, static reading, not yet measured live).** The owner reported no line for drops in the Chaos Tower. Read statically (`docs/RUNTIME_DATA_MODELS.md` § 16.12): on a tower floor `LootGroundInit` takes each new ground item off the floor and keeps its item struct in `Controller_obj.lootExplosionList`, and `LootExplosion`, at the floor's end, puts the same structs back on the ground with no `CreateItemNew`, so the creation guard alone held every tower drop as `held-bag-drop`. The fix reads that list by name once per frame (after the frame's decisions, before the creation window ages) and keeps an entry's key only when its struct was built in that frame or the one before; when the burst lands it, the guard passes it (`burst-landed=` +1) and the usual rarity and once-per-item rules apply. A bag drop on a floor is collected too, but its struct was not just built, so it is not kept and stays held. A shorter or different list, or none, forgets every kept key. No hook, no address, no write. Should a patch rename `lootExplosionList` or `itemInstance`, the reader goes blind and tower drops are held again, with `burst-listed=` staying 0 on a floor. **Not observed live yet:** the burst itself (a floor's drops leaving the ground and landing at its end) and a line for a tower drop; a bag drop on a floor staying held; whether both `LootGroundInit` calls run for one item at the burst (the identity memory keeps either to one line); what the protected value that also sends a drop to the list outside a `Chaos_Tower_` room means; the Wormhole (`WormholeGiveReward` also calls `LootExplosion`; the reader covers it without a test); the tower's reward room; and whether `lootannprobe place`'s `"32"` tier is read by the ground filter. Record: `ForgePact/docs/loot-announcement-research.md` § Chaos Tower (#227).
+    - **A Chaos Tower floor's drops are announced when the floor's end lands them, not at the kill (ForgePact #227; verified live 2026-10-23, capture `forgepact-227-chaos-tower-announce-live-1`).** The owner reported no line for drops in the Chaos Tower. Read statically (`docs/RUNTIME_DATA_MODELS.md` § 16.12): on a tower floor `LootGroundInit` takes each new ground item off the floor and keeps its item struct in `Controller_obj.lootExplosionList`, and `LootExplosion`, at the floor's end, puts the same structs back on the ground with no `CreateItemNew`, so the creation guard alone held every tower drop as `held-bag-drop`. The fix reads that list by name once per frame (after the frame's decisions, before the creation window ages) and keeps an entry's key only when its struct was built in that frame or the one before; when the burst lands it, the guard passes it (`burst-landed=` +1) and the usual rarity and once-per-item rules apply. A bag drop on a floor is collected too, but its struct was not just built, so it is not kept and stays held. A shorter or different list, or none, forgets every kept key. No hook, no address, no write. Should a patch rename `lootExplosionList` or `itemInstance`, the reader goes blind and tower drops are held again, with `burst-listed=` staying 0 on a floor. **Measured live** (2026-10-23, capture `forgepact-227-chaos-tower-announce-live-1`, one first floor): the list filled with the floor's drops (`burst-listed=` and `burst-fresh=` rising together with natural drops), the floor's end emptied it and landed them (`burst-landed=12`), a placed Heroic item with the list memory on was decided `announce via=burst` and the owner saw its red line, and one placed with the memory off (the rule before the fix) was decided `held-bag-drop` and the owner saw no line for it. The burst initialised each landed item twice (two decide lines per stamp); the identity memory held the second as `held-duplicate`, so one line showed. **Not observed live:** a floor's drops leaving the ground at collection (not watched); a bag drop on a floor staying held (the session never dropped one); which two `LootGroundInit` calls ran for one item, and that `LootExplosion` ran at all (its debugger logpoint was not run); Angelic and Unholy in the tower; a floor left unfinished; what the protected value that also sends a drop to the list outside a `Chaos_Tower_` room means; the Wormhole (`WormholeGiveReward` also calls `LootExplosion`; the reader covers it without a test); the tower's reward room; and whether `lootannprobe place`'s `"32"` tier is read by the ground filter. Record: `ForgePact/docs/loot-announcement-research.md` § Chaos Tower (#227).
     - **A co-op peer's dropped item is announced only if its build on this client goes through `CreateItemNew`.** A static reading of `CA_playerItemDrop` says it is built anew here, but whether that build goes through `CreateItemNew` is not established; if it does not, the creation guard holds it as `held-bag-drop` and no line appears. Not measured: no co-op session has been run (`docs/RUNTIME_DATA_MODELS.md` § 16.11).
     - **The guard reads nothing new unless `create-hook=both`.** `LootGroundCreate` calls `CreateItemNew` directly, which a table-only hook never sees; with `create-hook=table-only` or `none` the game's own drops are held as not recently created and nothing is announced. `lootann 1` says so in one line. If another feature installed `CreateItemNew` first, its route is the one reported.
     - **A switch on at launch arms, and hooks once a character exists (2026-10-08).** Every live session switched the mod on in game; the way a player uses it, the switch already on as the game starts, was never measured, and until this change its `lootann 1` launch command installed `LootGroundInit` and `CreateItemNew` at character select, the hazard of item 8. The hooks now go in once per session on the first frame where setup is done and `HhResolveLocalPlayer` resolves the player, looked for every 60 frames while armed; `install=not-armed|waiting-for-character|installed` on `lootann 1` and `lootann stat` says which. Measured 2026-10-08 (capture `forgepact-moveall-loot-satanic-live-1`, § Loot announcements' "Verified live 2026-10-08"): `lootann 1` at character select read `install=waiting-for-character create-hook=not-installed` then and 3 s later, the hooks read `init-hook=both create-hook=both install=installed` 5 s after the character loaded, and a placed Heroic item was announced. The owner's report that the mod "doesnt work" (2026-10-08) was not captured, and the build before the change was not run, so that this was its cause is not established. A failed install is still tried once and not retried, and there is no fallback pass like hidden loot's (a pass cannot tell a fresh drop from a bag drop without the creation guard).
@@ -5742,7 +5742,7 @@ build adds `lootannprobe` (Command Reference). Record:
   `no-key=` and is held the same way. The guard does not need to know which
   script the bag drop runs through.
 - *A Chaos Tower floor's drops are announced when the floor's end lands them*
-  (ForgePact #227, static reading, not yet measured live; at the landing, not
+  (ForgePact #227, verified live 2026-10-23 below; at the landing, not
   at the kill, is the default applied on 2026-10-23 without asking the owner). On a tower floor the game
   takes each new ground item off the floor and keeps its item struct in
   `Controller_obj.lootExplosionList`; at the floor's end `LootExplosion` puts
@@ -5837,6 +5837,39 @@ and `lootann-mythic-announced` are research results of that build, not of
 the shipped set. Record: `ForgePact/docs/loot-announcement-research.md`
 § Live procedure 4, Results.
 
+**Verified live 2026-10-23, the Chaos Tower's loot burst** (capture
+`forgepact-227-chaos-tower-announce-live-1`, the toolkit workorder
+`forgepact-227-chaos-tower-announce`'s Live procedure 1, the research doc's
+Live procedure 5; research build at ForgePact `ba5e4c8`, SHA-256
+`a21409cb…9fa3`; slot 14 "Sorak", Outskirts of Inoya at Hell, then
+`Chaos_Tower_Floor_01_rm`): `ping` answered `pong (YYTK 4.0.1)` and `lootann
+stat` began `lootann: off route=server` with `burst-listed=0`; `lootann 1`
+answered `init-hook=both create-hook=both install=installed`. Outside the
+tower a placed Heroic item was decided `announce via=recent` and a screenshot
+showed `SERVER: Sorak found Cobra Heavy Belt`. On the floor, `lootannprobe
+burst` read `tower=1 list=ref:291`, `lootannprobe say` showed a red
+`SERVER: tower chat test` at once, and the list grew with every drop
+(`burst-listed`/`burst-fresh` 0/0 to 4/4 from the floor's natural drops
+before any placement). A Heroic item placed with `lootannprobe burst off`
+(A, the rule before the fix) and one placed with it `on` (B) each raised the
+list's size by one with no decide line and no red line at placement; only B
+raised `burst-fresh`. At the floor's end the list read `size=0 given=real:1`
+and `burst-landed=12`; `out.txt` decided B `announce via=burst` (then
+`held-duplicate via=burst`, the second initialisation) and A `held-bag-drop
+via=none` twice, with `sink-refused=0`. The owner saw B's red line and none
+for A; the operator's screenshot came about a minute later, after the line
+had faded. The burst came at the end of a 42 s freeze: x64dbg paused the
+game on each of its own first-chance C++ exceptions during the floor's fight,
+so the debugger was detached and the operator neither stopped the game nor
+restored the saves.
+Not run, and so not observed live: a bag drop on a floor (the owner accepted
+the session without it; the behaviour harness covers it), the `LootExplosion`
+logpoint and the burst-window `LootGroundInit` logpoints, Angelic and Unholy
+in the tower, the boss room and the lobby, a Wormhole, a floor left
+unfinished, and co-op. Record: `ForgePact/docs/loot-announcement-research.md`
+§ Chaos Tower (#227); the game facts are in `docs/RUNTIME_DATA_MODELS.md`
+§ 16.12.
+
 **Not known.** Whether the game's own announcement closure is bound on an
 offline ground item, and what `method_get_index`'s -1 for its `anon@`
 methods means; which rarity the naturally announced drop had; which script
@@ -5848,10 +5881,10 @@ Whether the switch on at launch failed before the arming change (only the
 build with the change was run); the switch on through the panel's own launch
 commands rather than `lootann 1` sent at character select; a Satanic or
 Mythic item held on the shipped three-rarity set (Satanic held was measured
-on the same gate on 2026-10-04; Mythic held is harness-only). The Chaos
-Tower's loot burst (#227) is a static reading until its live session: the
-burst itself and a line for a tower drop, a bag drop on a floor staying held,
-whether both `LootGroundInit` calls run for one item at the burst, what the
+on the same gate on 2026-10-04; Mythic held is harness-only). In the Chaos
+Tower's loot burst (#227, verified live 2026-10-23 above): a bag drop on a
+floor staying held, which two `LootGroundInit` calls initialise one item at
+the burst and that `LootExplosion` is the routine behind it, what the
 protected value that also sends a drop to `lootExplosionList` outside a
 `Chaos_Tower_` room means, the Wormhole's burst, the tower's reward room, and
 whether `lootannprobe place`'s `"32"` tier is read by the ground filter. Known

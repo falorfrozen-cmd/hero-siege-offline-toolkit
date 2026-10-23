@@ -4259,9 +4259,28 @@ the controls and the table are in the Item Editor's
 
 Every claim in this section is a **Static reading** (2026-10-23, local Ghidra
 project, the build the decompile index labels `498d588550d8`, our own words)
-unless it says inference or not established. None of it has been measured
-live yet; ForgePact #227's Live procedure 1 is the session meant to.
+unless it says measured, inference or not established. **Measured** marks
+what ForgePact #227's Live procedure 1 showed (2026-10-23, capture
+`forgepact-227-chaos-tower-announce-live-1`, the research doc's Live
+procedure 5; research build sha256 `a21409cb…9fa3`, slot 14 "Sorak", Outskirts
+of Inoya at Hell, `Chaos_Tower_Floor_01_rm`), read through ForgePact's
+`lootannprobe burst` and `lootann stat` and the owner's own watch of the
+screen. That session ran one floor; a bag drop on a floor and the debugger's
+`LootExplosion` and burst-window `LootGroundInit` logpoints were not run
+(x64dbg paused the game on its own first-chance C++ exceptions during the
+floor's fight and was detached), so those parts stay **not observed live**.
 
+- **Measured: a floor collects its drops.** On the first floor
+  `Controller_obj.lootExplosionList` read as a reference to an existing
+  ds_list (`ds_exists` true) whose `ds_list_size` started at 0 and rose by one
+  for each new ground item: by 4 for the floor's natural drops before any
+  placement, by 1 in the very frame a placed Heroic item was put on the
+  ground, and again for later kills. Each entry's `itemInstance` gave the
+  item's identity key, and the natural drops' structs and the placed item's
+  read with the list memory on had been built through `CreateItemNew` in
+  that frame or the one before (`burst-fresh` rose with `burst-listed`).
+  That the ground item leaves the floor at that moment was not watched and
+  stays the inference below.
 - **Static reading: what is collected.** `LootGroundInit`, which every new
   ground item passes through (§16.11), has a branch for the Chaos Tower. It
   applies when the room's name starts with the tower's prefix (the same test
@@ -4281,11 +4300,15 @@ live yet; ForgePact #227's Live procedure 1 is the session meant to.
   test can exempt an item from the branch; which kinds it exempts was not
   read and is **not established**. Nothing tests `isPlayerDrop` before the
   append, so an item the player drops from the bag on a tower floor is
-  collected as well.
+  collected as well (a bag drop on a floor is **not observed live**: Live
+  procedure 1 never got to drop one).
 - **Static reading: protected keys.** `Controller_obj.lootExplosionGiven` and
   `Controller_obj.lootExplosionGold` each hold a protected-store key, not the
   value itself, the same pattern as the monster values of §13.7: reading the
-  variable directly returns the key.
+  variable directly returns the key. **Measured:** `GPV` of
+  `lootExplosionGiven` (the route `gatestats` uses) read `0` while the floor
+  was collecting and `1` once the floor had ended. A direct read of either
+  variable was not taken, and `lootExplosionGold` was not read.
 - **Static reading: the burst.** `LootExplosion` first sets
   `lootExplosionGiven` true, drops the gold the floor held, and then, for each
   list entry, calls `LootGroundDrop` around a given point (a new
@@ -4294,6 +4317,18 @@ live yet; ForgePact #227's Live procedure 1 is the session meant to.
   ground item with a second argument of `true`, and finally clears the list.
   `LootGroundDrop`'s own body also calls `LootGroundInit`; whether both calls
   run for one item is **not established**.
+- **Measured: the burst lands the held items.** When the floor ended ("Floor
+  Cleared"), the list read `size=0` and the given flag `1`, and both placed
+  items were on the ground near the character. Each carried the same
+  `itemTimeStamp` it had when it was listed, so the struct that landed is the
+  listed one or a copy with the same stamp (which of the two is not
+  established), and no `CreateItemNew` had built it in that frame or the one
+  before. ForgePact's `LootGroundInit` detour saw each landed item twice:
+  two `lootann decide:` lines per stamp, and 12 burst landings for the 6
+  entries the reader kept. That fits both `LootGroundInit` calls running for
+  one item, but which two calls they were is **not established**: the
+  `LootExplosion` logpoint was not run, so that `LootExplosion` is the
+  routine that ran stays the static reading above.
 - **Static reading: who bursts it.** `LootExplosion` has two direct callers
   (found by a byte scan for call sites, with positive controls, since the MCP
   callers table was empty): the closure SDK-named
@@ -4301,7 +4336,9 @@ live yet; ForgePact #227's Live procedure 1 is the session meant to.
   `chaosTowerFloorFinished`, `chaosTowerIsLastFloor`, `chaosTowerFloor`,
   `chaosTowerFloorList`, `nextFloorType` and `nextFloorNumber` (so the burst
   comes when a floor is finished), and `WormholeGiveReward`. Whether a
-  Wormhole reward uses the same held list is **not established**.
+  Wormhole reward uses the same held list is **not established**. That the
+  burst comes at a floor's end is **measured** (above); which caller ran is
+  not.
 - **Static reading: the reset.** `Controller_obj`'s closure `anon@16838`
   clears `lootExplosionList` and resets `lootExplosionGold`,
   `chaosTowerFloor`, `chaosTowerSpawnZone`, `chaosTowerStarted`,
@@ -4313,14 +4350,18 @@ live yet; ForgePact #227's Live procedure 1 is the session meant to.
   tower's death effects and makes no item call. The tower's reward, near
   `Chaos_Tower_NPC_obj`'s code, gives an item through `DropItemHeroic` and a
   drop table; in which room is **not established**.
-- **Inference, until ForgePact #227's Live procedure 1: what ForgePact's
-  creation guard does with it.** The guard (§16.11's last bullet) passes a
-  ground item only when the game built its struct through `CreateItemNew`
-  this frame or the last. A tower floor's drop is built through
-  `CreateItemNew` when it first drops, but that ground item is removed into
-  the list; the item that reaches the ground at the burst is the same struct,
-  frames or minutes later, with no new `CreateItemNew`. So the guard holds it
-  as a bag drop (`held-bag-drop`) and no line appears.
+- **Measured (2026-10-23, capture `forgepact-227-chaos-tower-announce-live-1`):
+  what ForgePact's creation guard does with it.** The guard (§16.11's last
+  bullet) passes a ground item only when the game built its struct through
+  `CreateItemNew` this frame or the last. A tower floor's drop is built
+  through `CreateItemNew` when it first drops and is listed; the item that
+  reaches the ground at the burst carries the same struct's stamp, minutes
+  later, with no new `CreateItemNew`. A Heroic item placed with the fix's list
+  memory off (the rule before #227) was decided `held-bag-drop` at the burst,
+  and the owner saw no line for it; one placed with the memory on was decided
+  `announce via=burst`, and the owner saw its red `SERVER: Sorak found
+  <item>` line (the session's screenshot came a minute later, after the line
+  had faded). The burst came at the end of a 42 s freeze the debugger caused.
 
 [loot announcements, Chaos Tower (#227)](../ForgePact/docs/loot-announcement-research.md#chaos-tower-227)
 

@@ -1,5 +1,5 @@
 {
-  "$schema_note": "Hand-curated record of how Hero Siege announces a rare ground drop in chat, for ForgePact#17 (Loot announcements). NOT mechanically extracted (see hs-game-sdk/curated/satanic_zone.json for why curated/ exists). Data only: no binding is generated from this file. Every entry carries its own `status`: `static_reading` (read from the compiled game locally and paraphrased in our own words; no script text is kept anywhere), `inference`, `not_established`, or `measured` (only `route.status`, from ForgePact#17's Live procedure 3). `scripts` is the announcement chain by SDK name, in call order. `rarity_key` is the itemInfoStruct key the closure is taken to read: that key \"27\" holds the rarity is measured (docs/RUNTIME_DATA_MODELS.md section 16.4), but that the closure reads it is an inference from the codes it compares, because the key strings were not read. `rarity_codes_in_closure` lists every rarity code the closure compares on a branch of its own, and for each whether the online path announces it; the list is what was read, and `announced_online` is `not_established` where the reading does not say. `route` is the call ForgePact's `lootann` ships to show the line offline: `server` (chosen 2026-10-04 after Live procedures 1 and 3; the game's own path, `method`, could not be tested offline (the probe's anon control did not resolve)). The argument is ForgePact docs/loot-announcement-research.md; the shared facts are docs/RUNTIME_DATA_MODELS.md sections 8.6 and 16.10. `chaos_tower_loot_burst` (ForgePact#227) records how a Chaos Tower floor holds its new ground items in Controller_obj.lootExplosionList until gml_Script_LootExplosion puts them back on the ground at the floor's end (docs/RUNTIME_DATA_MODELS.md section 16.12), with its own `status` and a `not_established` list.",
+  "$schema_note": "Hand-curated record of how Hero Siege announces a rare ground drop in chat, for ForgePact#17 (Loot announcements). NOT mechanically extracted (see hs-game-sdk/curated/satanic_zone.json for why curated/ exists). Data only: no binding is generated from this file. Every entry carries its own `status`: `static_reading` (read from the compiled game locally and paraphrased in our own words; no script text is kept anywhere), `inference`, `not_established`, or `measured` (`route.status`, from ForgePact#17's Live procedure 3, and the parts of `chaos_tower_loot_burst` its `live` block lists, from capture forgepact-227-chaos-tower-announce-live-1). `scripts` is the announcement chain by SDK name, in call order. `rarity_key` is the itemInfoStruct key the closure is taken to read: that key \"27\" holds the rarity is measured (docs/RUNTIME_DATA_MODELS.md section 16.4), but that the closure reads it is an inference from the codes it compares, because the key strings were not read. `rarity_codes_in_closure` lists every rarity code the closure compares on a branch of its own, and for each whether the online path announces it; the list is what was read, and `announced_online` is `not_established` where the reading does not say. `route` is the call ForgePact's `lootann` ships to show the line offline: `server` (chosen 2026-10-04 after Live procedures 1 and 3; the game's own path, `method`, could not be tested offline (the probe's anon control did not resolve)). The argument is ForgePact docs/loot-announcement-research.md; the shared facts are docs/RUNTIME_DATA_MODELS.md sections 8.6 and 16.10. `chaos_tower_loot_burst` (ForgePact#227) records how a Chaos Tower floor holds its new ground items in Controller_obj.lootExplosionList until gml_Script_LootExplosion puts them back on the ground at the floor's end (docs/RUNTIME_DATA_MODELS.md section 16.12), with its own `status` and a `not_established` list.",
   "source": [
     {
       "path": "ForgePact/docs/loot-announcement-research.md",
@@ -103,16 +103,36 @@
     "status": "static_reading",
     "read": "2026-10-23, local Ghidra project, the build the decompile index labels 498d588550d8; paraphrased in our own words",
     "issue": "falorfrozen-cmd/ForgePact#227",
+    "live": {
+      "capture": "forgepact-227-chaos-tower-announce-live-1",
+      "date": "2026-10-23",
+      "procedure": "ForgePact#227's Live procedure 1 (the research doc's Live procedure 5): research build sha256 a21409cb7320811b8f337cf165f5ec3540cba8ec6a1bc147af68e8f1113a9fa3, slot 14 Sorak, Outskirts of Inoya at Hell, then Chaos_Tower_Floor_01_rm; read through lootannprobe burst, lootann stat and out.txt's lootann decide lines, with the owner watching the screen at the burst",
+      "measured": [
+        "on the first floor, Controller_obj.lootExplosionList read as a reference to an existing ds_list whose size rose by one for each new ground item (4 natural drops before any placement, 1 in the frame of a placed Heroic item) and read 0 once the floor had ended",
+        "the listed natural drops' and the placed item's structs (with the list memory on) were built through CreateItemNew in that frame or the one before (burst-fresh rose with burst-listed)",
+        "GPV of Controller_obj.lootExplosionGiven read 0 while the floor collected and 1 once it had ended",
+        "the floor's end landed the held items: both placed items lay on the ground afterwards, each with the itemTimeStamp it had when listed, and burst-landed read 12",
+        "the LootGroundInit detour saw each landed item twice (two lootann decide lines per stamp; 12 burst landings for the 6 kept entries); which two calls they were is not established",
+        "with the list memory off (the rule before ForgePact#227) a placed Heroic item was decided held-bag-drop at the burst and the owner saw no line; with it on, one was decided announce via=burst and the owner saw its red SERVER line"
+      ],
+      "not_run": [
+        "a bag drop on a floor (case C); the owner accepted the session without it",
+        "the LootExplosion debugger logpoint and the burst-window LootGroundInit logpoints (x64dbg paused the game on its own first-chance C++ exceptions during the floor's fight)",
+        "Angelic and Unholy in the tower, the boss room and the lobby, a Wormhole, a floor left unfinished, co-op"
+      ]
+    },
     "controller_variables": [
       {
         "name": "Controller_obj.lootExplosionList",
         "holds": "a plain ds_list of s_LootExplosionData structs, the floor's held ground items, read directly",
-        "status": "static_reading"
+        "status": "measured",
+        "note": "measured that it is a readable ds_list that grows with a floor's new ground items and is empty after the floor's end (live.capture); that its entries are s_LootExplosionData structs is a static reading"
       },
       {
         "name": "Controller_obj.lootExplosionGiven",
         "holds": "a protected-store key, not the value; the flag behind it gates collection (collect while false) and LootExplosion sets it true",
-        "status": "static_reading"
+        "status": "static_reading",
+        "measured": "GPV of it read 0 while a floor collected and 1 after the floor's end (live.capture); a direct read was not taken"
       },
       {
         "name": "Controller_obj.lootExplosionGold",
@@ -181,17 +201,19 @@
       "note": "that it is what m_ChaosTowerReset holds is an inference"
     },
     "creation_guard_effect": {
-      "status": "inference",
-      "note": "the item that reaches the ground at the burst is the struct CreateItemNew built when it first dropped, frames or minutes earlier, so ForgePact's Loot announcements creation guard holds it as held-bag-drop and no line appears; until ForgePact#227's Live procedure 1"
+      "status": "measured",
+      "note": "the item that reaches the ground at the burst carries the stamp of the struct CreateItemNew built when it first dropped, minutes earlier, so ForgePact's Loot announcements creation guard alone holds it as held-bag-drop and no line appears; measured 2026-10-23 in capture forgepact-227-chaos-tower-announce-live-1 (a Heroic item placed with the list memory off decided held-bag-drop at the burst, no line seen by the owner)"
     },
     "not_established": [
       "what gDataProtected[12] means",
       "which item kinds the one item-kind test in LootGroundInit's tower branch exempts",
       "that the call after the append destroys the ground instance (inferred from the same runtime routine destroying a dialog's instance elsewhere)",
-      "whether both LootGroundInit calls (LootGroundDrop's own and LootExplosion's) run for one item",
+      "whether the two initialisations measured per landed item are LootGroundDrop's own LootGroundInit call and LootExplosion's, and that LootExplosion is the routine that ran (its logpoint was not run)",
       "whether a WormholeGiveReward reward uses the same held list",
       "in which room the tower's reward (DropItemHeroic) is given",
-      "anything live: no session has measured the burst yet"
+      "whether the struct that lands is the listed one or a copy with the same itemTimeStamp",
+      "that the ground item leaves the floor when it is listed (not watched live)",
+      "that a bag drop on a floor is collected and stays held (not observed live)"
     ]
   }
 }
