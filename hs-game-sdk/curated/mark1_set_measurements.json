@@ -1514,7 +1514,7 @@
       "procedure": "Stats live procedure 5 of the 2026-10-22 playtest (ForgePact#166): the player's mana regen tick at the game's frame rate as found (about 144) and at 60, and the Mark 1 drain's measured share at the shipped unit 0.745, on save slot 14 Sorak (White Mage) with Mana Orb (Q) and Soul Spurn (R) unbound and Shadow Bolt bound to Y, mana read in process (mark1probe vitals), 10:11 to 10:49 UTC, with the hub's x64dbg MCP attached at D1 (default rate) and D2 (60); saves restored clean at the end.",
       "research_dll_sha256": "f8e36e7701a6aaf1911cc0cb7eae23c1ad6661949155c79bf07cf394da21dc1c",
       "forgepact_commit": "2d3e9dd",
-      "summary": "16 checks: 11 pass, 3 fail, 1 not-observed, 1 not-run. drain-pct pass at 1.117% (+/-0.005) of maximum mana a second per skill at unit 0.745; drain-capped 0.956% at 60; tick-shape pass (divisor 10 at both rates); regen-fps not-observed (r 0.856); fps-default fail against the Video page's disabled Framerate row (60) while the game ran 143.7 by its own counter (the owner dropped it from the required set, data kept); dbg-tick and dbg-replenish fail their rule at D1 only because the logpoints slowed the game to about 60.5 FPS, one hit a tick by the gain at both settings.",
+      "summary": "16 checks: 11 pass, 3 fail, 1 not-observed, 1 not-run. drain-pct pass at 1.117% (+/-0.005) of maximum mana a second per skill at unit 0.745; drain-capped 0.956% at 60; tick-shape pass (divisor 10 at both rates); regen-fps not-observed (r 0.856); fps-default fail against the Video page's disabled Framerate row (60) while the game ran 143.7 by its own counter (the owner dropped it from the required set, data kept); dbg-tick and dbg-replenish fail their rule at D1 because that window ran at about 60.5 frames a second, where the tick is slower (S7); one hit a tick by the gain in both debugger windows (both about 60 FPS).",
       "bar": "row 0: 0,0 darkOath, 0,2 chainOfHolyLight, 0,4 healingZone (252, E), 0,6 shadowBolt (239, Y, bound by the operator); Mana Orb (Q) and Soul Spurn (R) unbound at S0; auto talents=-/252/-/239 free=-/0/-/1",
       "fps_setting": "Video page: VSync Off, Framerate row 60 drawn dim (menulayout enabled=0 on both its buttons); the game's own counter 143-144. The owner capped the game at 60 (what was changed not stated; the page then showed VSync On, Framerate still 60 disabled, counter 60); the operator set VSync Off again in S9 (143.5 FPS).",
       "checks": {
@@ -1590,7 +1590,7 @@
         "windows": [
           {
             "step": "S2",
-            "fps_setting": "default (about 144)",
+            "frame_rate": "about 144 (VSync off)",
             "switch": "off",
             "forced_answer": 0,
             "frames": 600,
@@ -1601,7 +1601,7 @@
           },
           {
             "step": "S3",
-            "fps_setting": "default",
+            "frame_rate": "about 144 (VSync off)",
             "switch": "off",
             "forced_answer": 1,
             "frames": 3601,
@@ -1613,7 +1613,7 @@
           },
           {
             "step": "S4 off",
-            "fps_setting": "default",
+            "frame_rate": "about 144 (VSync off)",
             "switch": "off",
             "answer": 140,
             "frames": 361,
@@ -1625,7 +1625,7 @@
           },
           {
             "step": "S4 on",
-            "fps_setting": "default",
+            "frame_rate": "about 144 (VSync off)",
             "switch": "on",
             "answer": 76.8591,
             "drained_units": 63.1409,
@@ -1639,7 +1639,7 @@
           },
           {
             "step": "D1",
-            "fps_setting": "default, about 60.5 FPS under the logpoints",
+            "frame_rate": "about 144 (VSync off), about 60.5 FPS under the logpoints",
             "switch": "off",
             "answer": 140,
             "frames": 1201,
@@ -1662,7 +1662,7 @@
           },
           {
             "step": "S6",
-            "fps_setting": "60",
+            "frame_rate": "60 (VSync on; Framerate row 60, disabled, as in every window)",
             "switch": "off",
             "forced_answer": 0,
             "frames": 600,
@@ -1673,7 +1673,7 @@
           },
           {
             "step": "S7",
-            "fps_setting": "60",
+            "frame_rate": "60 (VSync on; Framerate row 60, disabled, as in every window)",
             "switch": "off",
             "forced_answer": 1,
             "frames": 1801,
@@ -1685,7 +1685,7 @@
           },
           {
             "step": "S8 off",
-            "fps_setting": "60",
+            "frame_rate": "60 (VSync on; Framerate row 60, disabled, as in every window)",
             "switch": "off",
             "answer": 140,
             "frames": 361,
@@ -1698,7 +1698,7 @@
           },
           {
             "step": "S8 on",
-            "fps_setting": "60",
+            "frame_rate": "60 (VSync on; Framerate row 60, disabled, as in every window)",
             "switch": "on",
             "answer": 76.8591,
             "drained_units": 63.1409,
@@ -1712,7 +1712,7 @@
           },
           {
             "step": "D2",
-            "fps_setting": "60",
+            "frame_rate": "60 (VSync on; Framerate row 60, disabled, as in every window)",
             "switch": "off",
             "answer": 140,
             "frames": 1201,
@@ -1735,7 +1735,7 @@
           },
           {
             "step": "S9",
-            "fps_setting": "default again",
+            "frame_rate": "about 144 (VSync off) again",
             "frames": 300,
             "ms": 2091,
             "gain": 0,

@@ -1746,13 +1746,19 @@ HUD's methods; one headless slot-reference scan (`FindSlotRefSites.java`) of
     rates.** Every window's gain was a whole number of ticks of
     ceil(answer / 10): answer 140 gave 14 a tick (308 and 630 = 45 × 14),
     answer 76.86 (the drain on) gave 8 a tick (176 and 360 = 45 × 8); the
-    divisor stayed 10 at 60.
+    divisor stayed 10 at 60 frames a second (VSync on; the setting row
+    unchanged).
   - **What the logpoints counted.** The entries of `playerUpdateTimerMana`
     and `StatManaReplenish` were each hit once per tick, within 5% of each
     window's ticks (from its gain), and far fewer times than frames (0.12
-    to 0.14 a frame), at both settings: the tick script runs only when a
-    tick is due, and the game asks id 42 once a tick. Mana gained per hit
-    read 13.3 to 14.8 against 14 a tick.
+    to 0.14 a frame), in both debugger windows, which both ran at about 60
+    frames a second (57.1 and 60.5; the logpoints slowed the 144 setting),
+    so the entries were not counted at 144. The tick script runs only when
+    a tick is due, and `StatManaReplenish` (the replenish getter) is
+    entered once a tick. Counted against each window's ticks from its
+    gain; `dbg-tick` and `dbg-replenish` failed their rule in D1, whose
+    ticks S3's rate overpredicted. Mana gained per hit read 13.3 to 14.8
+    against 14 a tick.
   - **Mark 1's drain.** At the shipped unit 0.745 with two proc columns
     each tick took 14 − 8 = 6 mana: 1.117% of maximum mana a second per
     skill at about 144 frames a second (±0.005) and 0.956% at 60, both
@@ -1765,6 +1771,11 @@ HUD's methods; one headless slot-reference scan (`FindSlotRefSites.java`) of
     argument and what it reads) was not read;
   - what the Video page's disabled Framerate row means, and which
     `game_get_speed` value the game runs with while it is disabled;
+  - whether the tick's divisor depends on the FPS setting: Stats live 5
+    read 10 at about 144 and at 60 frames a second, but the 60 was reached
+    with VSync on while the Framerate row showed 60, disabled, in every
+    window and `game_get_speed` was not read, so the setting itself may
+    not have changed between them;
   - what the other three blends mean (plausibly mana, cooldown or stacks);
   - who else writes a button's `enabled`, and what else it changes besides
     the look (the tooltip and the left click were unchanged, measured
