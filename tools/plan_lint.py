@@ -92,6 +92,18 @@ parallel implementers, so file sets that meet must say so:
 
 Each check is linted like a criterion (prose, bare-python, ...).
 
+One item rule is a *warning*, printed and counted like the reach map's below
+and never changing the exit code (#505):
+
+  item-shared-build
+                   two items edit the same file, and the earlier one has a
+                   build check whose `(reads ...)` covers it. Every commit
+                   the later one makes re-runs that build, and the pair can never
+                   run in parallel. In forgepact-158-flight-charms-mod
+                   (2026-10-12) four items on `ModuleMain.cpp` re-ran each
+                   other's implementers three times over. Merge them into
+                   one item, or move the build into `## Acceptance criteria`.
+
 And the reach map (2026-09-27), which lets a fix round re-run only the
 criteria its change can reach (`run_criteria.py --changed-since`): each
 criterion declares the files whose change can alter its result, as
@@ -376,6 +388,32 @@ def reach_warnings(text: str, tracked: tuple | None = None) -> list:
                 if not known(glob):
                     out.append((f"criterion {k}", "reads-nothing",
                                 f"`{glob}` names no tracked file here, so no change would select this criterion"))
+    return out
+
+
+def item_warnings(text: str) -> list:
+    """`(item id, rule, excerpt)` per `item-shared-build`: an item whose build
+    checks read a file a later item edits. Items sharing a file run in plan
+    order, so only a later item's commit lands on a build already done."""
+    declared = items(text)
+    reads_of = {it["id"]: build_reads(it["checks"]) for it in declared}
+    out = []
+    for i, one in enumerate(declared):
+        globs = reads_of[one["id"]]
+        if not globs:
+            continue
+        files, later = [], []
+        for other in declared[i + 1:]:
+            hit = [f for f in one["files"] or [] if any(_overlap(f, g) for g in other["files"] or [])
+                   and any(reads_path(g, f) or _overlap(g, f) for g in globs)]
+            if hit:
+                later.append(other["id"])
+                files += [f for f in hit if f not in files]
+        if later:
+            out.append((f"item {one['id']}", "item-shared-build",
+                        f"{', '.join(f'`{f}`' for f in files[:3])}{' ...' if len(files) > 3 else ''} also edited by later "
+                        f"item(s) {', '.join(later)}, and this item's build check reads it: each of their commits re-runs "
+                        "the build; merge the items, or move the build to the acceptance criteria"))
     return out
 
 
@@ -1028,7 +1066,8 @@ def main(argv=None) -> int:
         if n is None:
             print(f"plan_lint: {path} has no '## Acceptance criteria' heading", file=sys.stderr)
             return 2
-        warnings = reach_warnings(path.read_text(encoding="utf-8", errors="replace"), tracked_files(path))
+        text = path.read_text(encoding="utf-8", errors="replace")
+        warnings = reach_warnings(text, tracked_files(path)) + item_warnings(text)
         for where, rule, excerpt in warnings:
             print(f"{path}: {where}: warning {rule}: {excerpt}")
         for where, rule, excerpt in findings:

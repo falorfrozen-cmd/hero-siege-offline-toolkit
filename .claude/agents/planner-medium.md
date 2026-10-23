@@ -584,7 +584,14 @@ first numbered step:
 - `files:` — the backticked paths or globs it alone may edit. Items whose
   files overlap must say so: `shares: `<id>`` (they run one after the other,
   in plan order) or `after: `<id>`` (this one needs the other's result).
-  `plan_lint.py` refuses an undeclared overlap as `item-overlap`.
+  `plan_lint.py` refuses an undeclared overlap as `item-overlap`. **Cut
+  items by disjoint files, not by feature step.** Items that edit the same
+  file never run in parallel, and when the earlier one has a build check
+  that reads that file, every later commit re-runs it: `plan_lint.py` warns
+  `item-shared-build`. Merge such items into one, or move the build into
+  `## Acceptance criteria` (#505: in forgepact-158-flight-charms-mod four
+  items on `ModuleMain.cpp` re-ran each other's implementers on every
+  commit).
 - `checks:` — on the same line, or as bullets under it: the fast checks this
   item's change can reach (the unit tests of the module it changed, the e2e
   suite of the screen it touched, a grep). Each is a criterion in the usual

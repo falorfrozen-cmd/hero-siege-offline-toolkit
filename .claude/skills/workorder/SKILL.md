@@ -867,6 +867,42 @@ workorder files and 536 `section.py` calls doing that by hand (the
 holds: `reviewScopes` and the items budgets ([`items.md`](items.md)). Exit 1
 means `plan_lint` has a finding: it goes back to the planner, as in Step 1.
 
+**Args too large to echo go through a file.** A plan of items carries each
+item's table in the args. The tool sends `check_count` and `check_keys` in
+place of the check texts, but a large plan's args are still tens of KB, and
+the Workflow tool takes args only inline. Echoing them costs the driver that
+much context per launch. On 2026-10-23 that cost pushed a 29-item resume
+into driver mode, and about 40 full subagent reports landed in its context
+instead (#547). So add `--to-file` whenever the plan has items, or the JSON
+would run past a few KB:
+
+```bash
+py -3 tools/workorder_brief.py --launch-args <slug> --to-file [the same flags]
+```
+
+It writes the args to `.claude/workorders/.rounds/<slug>/launch-args.json`
+and prints `{slug, argsPath, argsDigest}`. Pass that object as `args`, adding
+only the keys no file holds (`reviewScopes`, the items budgets, which win
+over the file's). The launch's first agent, `load-args:1` (haiku), runs
+`workorder_brief.py --read-launch-args`, and the script checks the relay
+against `argsDigest`. A mismatch is retried once at sonnet, then the launch
+returns `BAD-ARGS`; a missing file, another workorder's file, or a stale one
+(the plan or context file changed after it was written: exit 6) is
+`BAD-ARGS` at once. So write it again after every `workorder_record.py
+apply`, right before the launch. Inline args still work as before.
+
+**Workflow mode keeps phase reports out of the driver.** In workflow mode no
+implementer, verifier, reviewer or amendment report reaches the driver: they
+go into the launch's `record`, `workorder_record.py apply` writes them to the
+Log, and it prints a few routing lines. Read a round's detail from the Log
+on demand, with `section.py`, never by pasting it into a prompt. Driver mode
+takes every report whole: `tools/workorder_speed.py` reports this as
+`driver_context` (`phase_agent_results`, `peak_tokens`, and per launch the
+context and args KB). The 2026-10-23 driver-mode session peaked at 374,710
+tokens with 26 phase-agent results in its context. So a session splits only
+at an owner question or a live gate (below), never because its context
+filled.
+
 `--reviewers` names the reviewers that apply to this change (Step 3 table,
 first column) and that State does not list yet; the Step 0.5 triage row
 gives `--implementer-effort`/`--implementer-model`; `--research-headings`
