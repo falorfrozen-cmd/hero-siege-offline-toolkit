@@ -202,6 +202,49 @@ class QueueTests(SpeedCase):
         self.assertEqual(launch["items"], 1)
 
 
+class DriverContextTests(SpeedCase):
+    # #547: driver mode took ~40 full reports into the driver's own context;
+    # a workflow launch takes in one result and echoes its args.
+    def test_phase_agent_results_and_each_launch(self):
+        driver = (twa.tool_turn(0, 0, "Agent", {"subagent_type": "implementer", "prompt": "p"}, result="R" * 3072,
+                                cache_read=50_000)
+                  + twa.tool_turn(10, 1, "Agent", {"subagent_type": "docs-sync-reviewer", "prompt": "p"}, result="R" * 1024,
+                                  cache_read=60_000)
+                  + twa.tool_turn(20, 2, "Agent", {"subagent_type": "Explore", "prompt": "p"}, result="x" * 1024,
+                                  cache_read=70_000)
+                  + twa.tool_turn(30, 3, "Workflow", {"scriptPath": "w.js", "args": {"slug": "zz", "argsPath": "p", "argsDigest": "d"}},
+                                  result="y" * 2048, cache_read=80_000))
+        b = self.builder().driver(driver)
+        b.workflow_agent("wf_d", "implementer", "item-implementer:a:a1:r0", span(31, 60, 10))
+        dc = self.report(b)["sessions"][0]["driver_context"]
+        self.assertEqual(dc["peak_tokens"], 80_100)
+        self.assertEqual((dc["agent_results"], dc["phase_agent_results"]), (3, 2), "Explore is not a phase agent")
+        self.assertAlmostEqual(dc["phase_agent_result_kb"], 4.0, places=1)
+        self.assertEqual(len(dc["launches"]), 1)
+        launch = dc["launches"][0]
+        self.assertEqual(launch["context_tokens"], 80_100)
+        self.assertLess(launch["args_kb"], 0.1)
+        self.assertAlmostEqual(launch["result_kb"], 2.0, places=1)
+        # Control: a session with no agent and no launch reports zeros.
+        quiet = self.builder(session_id="ssn11111-0000-0000-0000-000000000000").driver([twa.turn(0, 0), twa.turn(5, 1)])
+        quiet.workflow_agent("wf_q", "implementer", "item-implementer:a:a1:r0", span(1, 4, 10))
+        dc = self.report(quiet)["sessions"][0]["driver_context"]
+        self.assertEqual((dc["agent_results"], dc["phase_agent_results"], dc["launches"]), (0, 0, []))
+
+    def test_rebuilds_and_their_re_checks_per_launch(self):
+        b = self.builder().driver([twa.turn(0, 0), twa.turn(400, 1)])
+        b.workflow_agent("wf_r", "implementer", "item-implementer:a:a1:r0", span(0, 100, 10))
+        b.workflow_agent("wf_r", "verifier", "item-verifier:a:a1:r0", span(101, 150, 20))
+        b.workflow_agent("wf_r", "verifier", "item-verifier:a:a2:rebuild:r0", span(200, 250, 30))
+        self.launch_file(b, "wf_r", {"slug": "zz", "items": [{"id": "a"}]})
+        path = b.projects_dir / b.project / b.session_id / "workflows" / "wf_r.json"
+        data = json.loads(path.read_text(encoding="utf-8"))
+        data["result"] = {"outcome": "PASS", "items": [{"id": "a", "rebuilds": 1}, {"id": "b"}]}
+        path.write_text(json.dumps(data), encoding="utf-8")
+        launch = self.aggregate(b)["launches"][0]
+        self.assertEqual((launch["rebuilds"], launch["rebuild_checks"], launch["item_implementers"]), (1, 1, 1))
+
+
 class VerifyTests(SpeedCase):
     def test_item_reach_and_full_verifies(self):
         b = self.builder().driver([twa.turn(0, 0), twa.turn(900, 1)])

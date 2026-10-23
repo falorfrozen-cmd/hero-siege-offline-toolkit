@@ -61,6 +61,20 @@ steps 2-4 run as one workflow launch with no rounds inside it
   `build-dev` passed, three times, and each launch came back `PARKED` with
   `build-dev=done` and a DLL older than the fix. So give a build check its
   `(reads ...)`: without one any commit re-runs it.
+- A re-run is the item's checks first, not an implementer (#505): a fresh
+  verifier, `item-verifier:<id>:a<k>:rebuild:r<n>`, runs them against the
+  tree as it is now, and a pass leaves the item done. Only a failure sends it
+  to an implementer, with what failed. The re-check is not charged to the
+  item's attempts. In forgepact-158-flight-charms-mod (2026-10-12) four items
+  editing `ModuleMain.cpp` re-ran each other's implementers on every commit
+  (`forge` three times, `lever` three, `drops` twice), and most re-runs
+  changed nothing. So an item whose committed files are derived from what
+  its build reads (a generated header, say) needs a check that fails when
+  they are stale.
+- A per-commit reviewer waits while a plan item that edits a file the new
+  commits touched is still queued or running: that item will commit to the
+  same file again, and one pass reads both. Whatever is left runs at the
+  final catch-up.
 - When nothing is left to run, the `## Acceptance criteria` run once, as a
   development verify (`--dev`: whole suites and `(final)` criteria wait for
   the final gate before the pull request). A failure becomes one fix that

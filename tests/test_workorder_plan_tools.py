@@ -1165,6 +1165,24 @@ class PlanLintItemTests(TempDirMixin, unittest.TestCase):
         self.assertEqual(table["build-dev"]["build_reads"], ["ForgePact/plugin/**"])
         self.assertEqual(table["docs"]["build_reads"], [])
 
+    def test_warn_an_item_whose_build_reads_a_file_a_later_item_edits(self):
+        # #505, forgepact-158-flight-charms-mod (2026-10-12): items sharing
+        # ModuleMain.cpp re-ran each other's builds on every commit.
+        build = '`cd ForgePact && cmd //c "plugin_build\\build.bat dev"` exits 0 (reads `ForgePact/plugin/**`)'
+        forge = {"files": "`ForgePact/plugin/ModuleMain.cpp`", "checks": build}
+        lever = {"files": "`ForgePact/plugin/ModuleMain.cpp`, `ForgePact/plugin/Lever.hpp`", "checks": build, "after": "`forge`"}
+        docs = {"files": "`docs/d.md`", "checks": "`grep -c x docs/d.md` prints `1`"}
+        rc, out = self.lint(itemised(("forge", forge), ("lever", lever), ("docs", docs)))
+        self.assertEqual(rc, 0, "a warning never refuses the plan:\n" + out)
+        self.assertIn("item forge: warning item-shared-build: `ForgePact/plugin/ModuleMain.cpp` also edited by later item(s) lever", out)
+        self.assertNotIn("item lever: warning item-shared-build", out, "nothing after lever edits its files")
+        self.assertEqual(out.count("item-shared-build"), 1, out)
+        # Controls: a shared file the build does not read, and a shared file with no build check.
+        rc, out = self.lint(itemised(("forge", {**forge, "checks": build.replace("ForgePact/plugin/**", "docs/**")}), ("lever", lever)))
+        self.assertNotIn("item-shared-build", out)
+        rc, out = self.lint(itemised(("forge", {**forge, "checks": "`grep -c x ForgePact/plugin/ModuleMain.cpp` prints `1`"}), ("lever", lever)))
+        self.assertNotIn("item forge: warning item-shared-build", out)
+
     def test_fail_an_undeclared_overlap_and_pass_a_declared_one(self):
         overlapping = {"files": "`panel/src/app.css`", "checks": "`grep a b` exits 0"}
         rc, out = self.lint(itemised(("one", overlapping), ("two", overlapping)))

@@ -46,7 +46,17 @@ aggregate sums the minutes and divides the sums):
   `busy_minutes` leaves out.
 - `launches`: one per workflow run. An items launch adds its item windows:
   `max_concurrent`, `minutes_at_cap`, `queued_behind_cap`, `cap`,
-  `gate_runs` and `finding_to_fix_minutes`.
+  `gate_runs` and `finding_to_fix_minutes`, and (#505) `rebuilds` (from the
+  launch result's items), `rebuild_checks` (the re-checks a rebuild runs
+  before any implementer, `item-verifier:<id>:a<k>:rebuild:`) and
+  `item_implementers`.
+- `driver_context` (#547): what landed in the driver's own context.
+  `peak_tokens` and `last_tokens` (one turn's input plus cache tokens),
+  `agent_results`/`agent_result_kb` (every `Agent` result it took in) and
+  `phase_agent_results`/`phase_agent_result_kb` (implementers, verifiers,
+  planners, live operators and reviewers: in driver mode each is a full
+  report), and per `Workflow` call in `launches` the `context_tokens` at the
+  call, the `args_kb` it echoed and the `result_kb` it got back.
 - `items`: the most item windows running at once, and the item starts that
   waited on `maxParallel`, over all launches.
 - `verifies`: `item` (an `item-verifier:`), `reach` (another verifier whose
@@ -109,6 +119,7 @@ RECORD_HEADS = ("snapshot", "delta", "scribe", "refill", "amend-save", "amend-ch
 ITEM_AGENT_RE = re.compile(r"^(item-implementer|fix-implementer|item-verifier):([^:]+):")
 FINDING_FIX_RE = re.compile(r"^fix-implementer:fix-\d+:")
 REVIEW_PASS_RE = re.compile(r":p\d+:r\d+$")
+REBUILD_CHECK_RE = re.compile(r"^item-verifier:[^:]+:a\d+:rebuild:")
 CHECK_CMD_RE = re.compile(r"run_criteria|unittest|pytest|npm test|npm run|node --test|run_tests_parallel")
 ITEM_HEADING_RE = re.compile(r"^###\s+Item:\s*([A-Za-z0-9_-]+)")
 ITEM_FIELD_RE = re.compile(r"^\s*(?:[-*]\s+)?\**(owner|default|reversible):\**\s*(.*)$", re.I)
@@ -423,9 +434,24 @@ def launches(ld: Loaded) -> list:
                 "gate_runs": sum(1 for a in agents if a.agent_type == "verifier"
                                  and not (a.label or "").startswith("item-verifier:")),
                 "finding_to_fix_minutes": finding_to_fix(agents),
+                # #505: re-runs after a later commit landed on what a build read.
+                "rebuilds": sum(it.get("rebuilds") or 0 for it in result_items(meta)),
+                "rebuild_checks": sum(1 for a in agents if REBUILD_CHECK_RE.search(a.label or "")),
+                "item_implementers": sum(1 for a in agents if (a.label or "").startswith("item-implementer:")),
             })
         out.append(entry)
     return out
+
+
+def result_items(meta: dict) -> list:
+    result = meta.get("result")
+    if isinstance(result, str):
+        try:
+            result = json.loads(result)
+        except ValueError:
+            result = None
+    items = result.get("items") if isinstance(result, dict) else None
+    return [it for it in items if isinstance(it, dict)] if isinstance(items, list) else []
 
 
 def finding_to_fix(agents: list) -> list:
@@ -492,6 +518,37 @@ def implementer_checks(subs: list) -> dict:
         caught += got
     return {"implementers": implementers, "ran_check": ran, "caught": caught,
             "rate": (caught / ran) if ran else None}
+
+
+PHASE_AGENT_TYPES = {"implementer", "implementer-medium", "verifier", "planner", "live-operator"}
+
+
+def driver_context(driver: wa.AgentTranscript) -> dict:
+    """What landed in the driver's own context (#547). `peak_tokens` and
+    `last_tokens` are one turn's input plus cache tokens: the size of the
+    context it read. `agent_results` counts the `Agent` results it took in,
+    phase agents and reviewers in `phase_agent_results`, with their KB: in
+    driver mode each is a full report. `launches` has one row per `Workflow`
+    call: the context at the call, the KB of args it echoed, and of the
+    result it got back."""
+    turns = sorted(driver.turns.values(), key=lambda t: t.ts)
+    by_message = {t.message_id: t.total_tokens for t in turns}
+    agents = [c for c in driver.tool_calls if c.name in ("Agent", "Task")]
+    phase = [c for c in agents if (c.tool_input.get("subagent_type") or "") in PHASE_AGENT_TYPES | wa.REVIEWER_TYPES]
+    return {
+        "peak_tokens": max((t.total_tokens for t in turns), default=0),
+        "last_tokens": turns[-1].total_tokens if turns else 0,
+        "agent_results": len(agents),
+        "agent_result_kb": sum(c.result_bytes for c in agents) / 1024,
+        "phase_agent_results": len(phase),
+        "phase_agent_result_kb": sum(c.result_bytes for c in phase) / 1024,
+        "launches": [{
+            "at": _iso(c.ts_start),
+            "context_tokens": by_message.get(c.message_id, 0),
+            "args_kb": len(json.dumps(c.tool_input.get("args"), ensure_ascii=False).encode("utf-8")) / 1024,
+            "result_kb": c.result_bytes / 1024,
+        } for c in driver.tool_calls if c.name == "Workflow"],
+    }
 
 
 def routes(subs: list) -> dict:
@@ -594,6 +651,7 @@ def session_report(ld: Loaded) -> dict:
         "owner_blocks": owner_block_summary(tl["owner_blocks"]),
         "implementer_checks": implementer_checks(ld.subs),
         "routes": routes(ld.subs),
+        "driver_context": driver_context(ld.session.driver),
         "lanes": wa.lane_summary(ld.session),
         "workorder_reads": workorder_reads(ld.subs),
     }
@@ -658,6 +716,11 @@ def aggregate(entries: list) -> dict:
         "implementer_checks": {"implementers": total("implementer_checks", "implementers"),
                                "ran_check": ran, "caught": caught, "rate": (caught / ran) if ran else None},
         "routes": {k: total("routes", k) for k in ("amendments", "amendments_in_workflow", "replans", "consultations")},
+        "driver_context": {
+            "peak_tokens": max((e["driver_context"]["peak_tokens"] for e in entries), default=0),
+            **{k: total("driver_context", k) for k in ("agent_results", "agent_result_kb", "phase_agent_results", "phase_agent_result_kb")},
+            "launches": [dict(r, session=e["session"]) for e in entries for r in e["driver_context"]["launches"]],
+        },
         "lanes": {e["session"]: e["lanes"] for e in entries if e["lanes"]},
         "workorder_reads": dict(sorted(reads.items())),
     }
@@ -757,6 +820,10 @@ def format_text(report: dict) -> str:
             f"  run_criteria: {r['run_criteria']}",
             f"  owner blocks: {r['owner_blocks']}",
             f"  implementer checks: {r['implementer_checks']}; routes: {r['routes']}",
+            f"  driver context: peak {r['driver_context']['peak_tokens']} tokens; {r['driver_context']['phase_agent_results']} "
+            f"phase-agent results ({r['driver_context']['phase_agent_result_kb']} KB) of {r['driver_context']['agent_results']} "
+            f"agent results; launches (context tokens / args KB / result KB): " + (", ".join(
+                f"{x['context_tokens']}/{x['args_kb']}/{x['result_kb']}" for x in r["driver_context"]["launches"]) or "none"),
             "  workorder reads (calls/KB): " + ("; ".join(
                 f"{role} ({row['agents']} agents): "
                 + ", ".join(f"{k} {row[f'{k}_calls']}/{row[f'{k}_kb']}" for k in READ_KINDS)
