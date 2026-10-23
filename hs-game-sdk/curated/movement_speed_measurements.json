@@ -1,0 +1,151 @@
+{
+  "$schema_note": "Live points that hs_game_sdk.movement_speed_model is checked against (tests/test_movement_speed_model.py, MeasuredTests); the mechanism is docs/models/movement-speed-spec.md. ForgePact#166 phase 2, Mod live procedure 1, 2026-10-19, research build of ForgePact 109c908 (SHA-256 a2f64cf3889a4333e03c4fb0667045799b5fcb05f91e535c9fc171ff154ea493), save slot 14, character Sorak (White Mage), in Town_01_rm, every shipped mod off. Each sweep window held D down from the town waypoint and ran `mark1probe stat 64 <m> 240` (the dispatcher's id-64 answer multiplied by m on every local call for 240 frames) beside `mark1probe pos 240` (the window's modal step per frame and its mean frame time, ms). A ratio is the window's modal step over the control's 2.989 px, and is valid only when the window's ms is within 10% of the control's 6.945 (RDM section 19.10). MS10 is phase 1's Live 2 (2026-10-13), the same character and save at 13.4 ms a frame. Captures are cited by file name (forgepact-166-mark1-set-mod-live-1.md, forgepact-166-mark1-set-live-2.md) and stay with the hub's workorder files; the argument is ForgePact docs/mark1-set-research.md section Mod live 1 results. A status is measured, or not established for a value no window printed.",
+  "control": {
+    "answer": 151,
+    "modal_step": "2.989",
+    "ms": "6.945"
+  },
+  "measurements": [
+    {
+      "id": "MS1",
+      "kind": "baseline",
+      "status": "measured",
+      "date": "2026-10-19",
+      "check": "walk-control",
+      "source": [
+        {
+          "path": "ForgePact/docs/mark1-set-research.md",
+          "section": "Mod live 1 results"
+        }
+      ],
+      "what": "Two unlevered D walks from the town waypoint: modal step 2.989 px both, at 6.94 and 6.95 ms a frame.",
+      "values": {
+        "modal_steps": ["2.989", "2.989"],
+        "ms": ["6.94", "6.95"]
+      },
+      "model": "step_ratio(151, 151) == 1"
+    },
+    {
+      "id": "MS2",
+      "kind": "baseline",
+      "status": "measured",
+      "date": "2026-10-19",
+      "check": "stat-trace",
+      "source": [
+        {
+          "path": "ForgePact/docs/mark1-set-research.md",
+          "section": "Mod live 1 results"
+        }
+      ],
+      "what": "During a walk the dispatcher answered id 64 once a frame, 151 on all 60 frames, every call outside the probe's twenty rows, and StatMovementSpeed was never called outside the dispatcher.",
+      "values": {
+        "frames": 60,
+        "calls": 60,
+        "answer_min": 151,
+        "answer_max": 151,
+        "calls_inside_rows": 0,
+        "getter_direct": 0
+      },
+      "model": "the reference answer every sweep ratio is taken against"
+    },
+    {
+      "id": "MS3",
+      "kind": "sweep",
+      "status": "measured",
+      "date": "2026-10-19",
+      "check": "speed-sweep",
+      "source": [{"path": "ForgePact/docs/mark1-set-research.md", "section": "Mod live 1 results"}],
+      "what": "Answer x1.5 on all 240 dispatcher calls of the window.",
+      "values": {"multiplier": "1.5", "modal_step": "3.632", "ms": "6.93", "ratio": "1.215", "changed_dispatch": 240},
+      "model": "scaled_answer_ratio(1.5, 151)"
+    },
+    {
+      "id": "MS4",
+      "kind": "sweep",
+      "status": "measured",
+      "date": "2026-10-19",
+      "check": "speed-sweep",
+      "source": [{"path": "ForgePact/docs/mark1-set-research.md", "section": "Mod live 1 results"}],
+      "what": "Answer x0.75 on all 240 dispatcher calls of the window.",
+      "values": {"multiplier": "0.75", "modal_step": "2.668", "ms": "6.93", "ratio": "0.893", "changed_dispatch": 240},
+      "model": "scaled_answer_ratio(0.75, 151)"
+    },
+    {
+      "id": "MS5",
+      "kind": "sweep",
+      "status": "measured",
+      "date": "2026-10-19",
+      "check": "speed-sweep",
+      "source": [{"path": "ForgePact/docs/mark1-set-research.md", "section": "Mod live 1 results"}],
+      "what": "Answer x0.5 on all 240 dispatcher calls of the window: 0.785, not 0.5.",
+      "values": {"multiplier": "0.5", "modal_step": "2.346", "ms": "6.93", "ratio": "0.785", "changed_dispatch": 240},
+      "model": "scaled_answer_ratio(0.5, 151)"
+    },
+    {
+      "id": "MS6",
+      "kind": "sweep",
+      "status": "measured",
+      "date": "2026-10-19",
+      "check": "speed-sweep",
+      "source": [{"path": "ForgePact/docs/mark1-set-research.md", "section": "Mod live 1 results"}],
+      "what": "Answer x0.25 on all 240 dispatcher calls of the window.",
+      "values": {"multiplier": "0.25", "modal_step": "2.025", "ms": "6.93", "ratio": "0.678", "changed_dispatch": 240},
+      "model": "scaled_answer_ratio(0.25, 151)"
+    },
+    {
+      "id": "MS7",
+      "kind": "sweep",
+      "status": "measured",
+      "date": "2026-10-19",
+      "check": "speed-sweep",
+      "source": [{"path": "ForgePact/docs/mark1-set-research.md", "section": "Mod live 1 results"}],
+      "what": "Answer x0 (an answer of 0) on all 240 dispatcher calls of the window: the walk still moves, at 0.570.",
+      "values": {"multiplier": "0", "modal_step": "1.703", "ms": "6.96", "ratio": "0.570", "changed_dispatch": 240},
+      "model": "scaled_answer_ratio(0, 151)"
+    },
+    {
+      "id": "MS8",
+      "kind": "sweep",
+      "status": "measured",
+      "date": "2026-10-19",
+      "check": "speed-sweep",
+      "source": [{"path": "ForgePact/docs/mark1-set-research.md", "section": "Mod live 1 results"}],
+      "what": "Answer x-0.5 (an answer of -75.5) on all 240 dispatcher calls of the window: a negative answer slows the walk further and it still moves forward.",
+      "values": {"multiplier": "-0.5", "modal_step": "1.06", "ms": "6.93", "ratio": "0.355", "changed_dispatch": 240},
+      "model": "scaled_answer_ratio(-0.5, 151)"
+    },
+    {
+      "id": "MS9",
+      "kind": "target",
+      "status": "measured",
+      "date": "2026-10-19",
+      "check": "speed-half",
+      "source": [{"path": "ForgePact/docs/mark1-set-research.md", "section": "Mod live 1 results"}],
+      "what": "The multiplier interpolated between the -0.5 and 0 windows, -0.162 (an answer of about -24.5, that is (151 - 200) / 2), gave a ratio of 0.500.",
+      "values": {"multiplier": "-0.162", "modal_step": "1.495", "ms": "6.93", "ratio": "0.500", "changed_dispatch": 240},
+      "model": "scaled_answer_ratio(-0.162, 151), and step_ratio(answer_for_ratio(151, 1/2), 151) == 1/2"
+    },
+    {
+      "id": "MS10",
+      "kind": "sweep",
+      "status": "measured",
+      "date": "2026-10-13",
+      "check": "speed-stat",
+      "source": [{"path": "docs/RUNTIME_DATA_MODELS.md", "section": "19.10 Walking speed and jump length"}],
+      "what": "Phase 1's Live 2 halved the dispatcher's id-64 answer for 240 frames at 13.4 ms a frame: the modal step went from 5.979 px to 4.693 px, 0.785. The answer itself was not printed in that session; the same character and save answered 151 in Mod live 1, which the replay assumes.",
+      "values": {"multiplier": "0.5", "reference_step": "5.979", "modal_step": "4.693", "ms": "13.4", "ratio": "0.785", "answer_assumed": 151},
+      "model": "scaled_answer_ratio(0.5, 151)"
+    },
+    {
+      "id": "MS11",
+      "kind": "step-between-sessions",
+      "status": "measured",
+      "date": "2026-10-19",
+      "check": "walk-control",
+      "source": [{"path": "ForgePact/docs/mark1-set-research.md", "section": "Mod live 1 results"}],
+      "what": "The same unlevered walk had a modal step of 5.979 px at 13.4 ms a frame (phase 1) and 2.989 px at 6.94 ms (Mod live 1): a step ratio of 0.500 at a frame-time ratio of 0.518; a step proportional to frame time would be about 3.10 px. The cause (the frame clock, a target-rate setting or a per-frame constant) is not established, so the model takes each window's scale as a parameter.",
+      "values": {"steps": ["5.979", "2.989"], "ms": ["13.4", "6.94"]},
+      "model": "step_per_point_from(step, 151) for each window; not a constant of the model"
+    }
+  ]
+}

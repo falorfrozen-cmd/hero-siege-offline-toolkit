@@ -28,22 +28,34 @@ Links into `../ForgePact/` resolve in a checkout with the submodule initialised
 The primary player entity in GameMaker is an instance of `GameObject::Player_obj` (object index `3553` in the current SDK; this line said `1440` until 2026-09-24).
 
 ### Equipment Slots Layout (`equippedItems` array)
-The `equippedItems` array (or `inventory` equipped region) organizes items by numeric slot index:
+The `equippedItems` array (or `inventory` equipped region) organizes items by
+numeric slot index. Only some rows are measured; the rest were written before
+any measurement and stay **not measured**, and one of them (slot 3 as the
+gloves) is contradicted for the character measured:
 
-| Slot Index | Equipment Type | Description |
+| Slot Index | Equipment Type | Status |
 |---|---|---|
-| `0` | Helm | Head armor piece |
-| `1` | Chestplate | Body armor piece |
-| `2` | Boots | Footwear |
-| `3` | Gloves | Hand armor |
-| `4` | Belt | Waist gear |
-| `5` | Amulet | Primary neck accessory |
-| `6` | Ring 1 | Left finger ring |
-| `7` | Ring 2 | Right finger ring |
-| `8` | Main Hand | Primary weapon |
-| `9` | Off Hand | Shield, quiver, or secondary weapon |
-| `10` – `14` | Relics (`0`–`4`) | 5 active relic slots |
-| `15` – `18` | Charms | Inventory charm slots |
+| `0` | Helm | **Measured**: the worn helmet (ForgePact #166, Mod live 2, 2026-10-19). |
+| `1` | Body armour | **Measured**: the worn body armour (Mod live 2). |
+| `2` | Boots | **Measured**: the worn boots (Mod live 2). |
+| `3` | (the table said Gloves) | **Not measured.** The gloves are not here on the character measured: Mod live 2 found them at slot 4, and a read of slot 3 did not change when they came off or went back on. |
+| `4` | Gloves (the table said Belt) | **Measured**: the worn gloves (Mod live 2), on save slot 14's Sorak; another character not read. |
+| `5` – `8` | (the table said Amulet, Ring 1, Ring 2, Main Hand) | **Not measured.** |
+| `9` | Off Hand | **Measured**: the off hand (ForgePact #93, 2026-09-27, below). |
+| `10` – `14` | Relics (`0`–`4`) | **Measured**: the five equipped relics (#93, below). |
+| `15` – `18` | (the table said Charms) | **Not measured.** 15-17 were empty on the character measured, and the measured array is 18 strings long (0-17), so it has no slot 18. |
+
+The rows for slots 0, 1, 2 and 4 come from the Mark 1 set's worn read, which
+looks for each of its four pieces among gear slots 0 to 9 of
+`global.equippedItems[global.mplr][0]` and names the slot it found each in
+(`worn=0/1/2/4`, helmet, body armour, boots, gloves; with the gloves off,
+`worn=0/1/2/-`), in `Town_01_rm` on save slot 14, "Sorak" (White Mage):
+[Mark 1 research, Mod live 2 results](../ForgePact/docs/mark1-set-research.md#mod-live-2-results).
+The gloves at 4 match their item class (4 in `hs_game_sdk.ItemType`), and so
+do the helmet, body armour and boots (classes 0, 1 and 2), but the off hand's
+fingerprint at 9 ends in class 7 (below), so a slot is not its item class in
+general. `hs_game_sdk.player.EquipmentSlot` still
+carries this table's unmeasured `GLOVES = 3` and `BELT = 4`.
 
 The local character's equipped items are held in the global
 `global.equippedItems[global.mplr][0][slot]`, as **fingerprint strings**, not as
@@ -823,6 +835,30 @@ Shout and Berserk add theirs outside it.
   not read for it. Without Chosen One: not observed (the cast was not
   confirmed).
   [dev2 bug batch, #83](../ForgePact/docs/dev2-bug-batch-research.md#83-mana-orb-showed-no-countdown-with-chosen-one)
+- **The key refuses Mana Orb beyond its cooldown.** Its talent reads
+  `abilityCooldown` 6 and `abilityLength` 240. With Mark 1's automation
+  pressing Q, 74 presses in 30 s landed no Mana Orb, and a hand-held Q for
+  4 s while the automation left the gate alone cast none either, where the
+  same windows landed Healing Zone at its cooldown and Shadow Bolt
+  continuously; across the session a Q press landed only now and then (one
+  in a 10 s window, one in a 4 s hold). § 7.7 measured a forced Mana Orb
+  press casting once in more than 480 frames. Why the game refuses it is
+  **not established**; plausibly while its orb lives (about 35 s with
+  Chosen One, above). Whether a direct `TalentUseClass` call (§ 7.9) casts
+  it while the key refuses it was not established: the session's direct
+  calls of Mana Orb passed the player as a number, not a ref, and were
+  counted as calls that returned, not as casts. **Measured 2026-10-22** (ForgePact's Mark 1 Stats live 1,
+  `prio-order`, `lock-key`, `free-cadence`).
+- **What Mana Orb and Healing Zone do besides their effect** (the owner's
+  word, 2026-10-22, **not measured**): Mana Orb raises the player's mana
+  regen, so with it on the bar the HUD mana can refill too fast to show a
+  cost; Healing Zone has a constant life drain while it runs, which the
+  owner gave as the cause of the low life seen in that session (as low as
+  531 of 5651). Measured beside it: with the automation casting Healing
+  Zone, the life replenish's dispatcher original (id 38) read 159 and 242
+  where it had read 46 before (plausibly the zone's own replenish; not
+  established).
+  [Mark 1 Stats live 1 results](../ForgePact/docs/mark1-set-research.md#stats-live-1-results)
 
 [toggle skills, Toggle skill table](../ForgePact/docs/toggle-skills-research.md#toggle-skill-table),
 [Duration sweep](../ForgePact/docs/toggle-skills-research.md#duration-sweep-session-8-every-classs-timed-skill),
@@ -1059,6 +1095,702 @@ Measured on 2026-10-04 on Sorak, a White Mage, in town and in Outskirts of Inoya
     `ReturnExtraProjectilesRanged` and `StatAOESkillSize` counted no call from
     any other object in that window. The enemies died within seconds, so an enemy's
     call to these scripts was not observed.
+
+### 7.7 The cast gate and its input
+
+What ForgePact's Mark 1 research (#166, phase 1) read on 2026-10-13 about how
+a key press on the skill bar becomes a cast, in the build Ghidra imported (the
+one `py -3 tools/decomp_index.py build-hash` names). Sources: a local headless
+decompile of `CheckTalentUse` (2026-09-25, this build) read with the decompile
+index's slot names; a local scan of each script's compiled code for the
+variable, builtin and script names it references, the direct calls it makes
+and the constant ids it passes (its positive control: on
+`PathFindControllerCreate` the scan listed exactly what the MCP decompile of
+that function shows); and the ghidra MCP for the small functions. A byte scan
+of direct call sites is blind to calls through the script table or a method
+value, so a caller it did not find is not observed, not absent. Every bullet
+is a **static reading** (2026-10-13) unless it says measured. The **measured**
+parts come from the research's Live 1 session on 2026-10-13 (the
+`mark1probe` instrument and x64dbg logpoints, save slot 14, White Mage, in
+`Town_01_rm`, on the build above): see
+[Mark 1 research, Live 1 results](../ForgePact/docs/mark1-set-research.md#live-1-results).
+
+- **The gate runs inside the movement step.** The only direct call site of
+  `gml_Script_CheckTalentUse` (539) found is in `gml_Script_PlayerMovement`
+  (2774), which the player object's Step event calls. Its entry was measured
+  at about 85 calls a second in town with `self` equal to `other` and three
+  arguments ([x64dbg-mcp.md](tools/x64dbg-mcp.md), "Breakpoint rules").
+  **Measured** in Live 1: the local player's calls come once a frame
+  (consecutive frame numbers), and every call the probe saw was the local
+  player's (local and total counts equal), so the 85 a second is one call per
+  frame at the frame rate of that session, not several per frame.
+- **None of its three arguments names a bar slot.** All three are optional.
+  The first is the player instance (when it is undefined the gate takes a
+  value from the game's protected global data). The second is the player
+  number (default: the global `mplr`), and goes with the player into the
+  talent-info and talent-requirement lookups. The third (default 1) is the
+  index into `Input_Device_Manager_obj` (2259)'s `playerProfileSlot`, and is
+  handed on unchanged as `TalentUse`'s third argument, which § 7.2 measured
+  as 1 on a key cast. **Measured** in Live 1 (`ctu-args`): over 300 local
+  calls, idle and with Q held down, the three arguments were always the
+  player (as a `VALUE_REF`), 1 and 1. No argument names a slot.
+- **The bar slots are a loop inside the gate**, over a counter from 0 to 11.
+  For each value it looks the slot's talent id up (through a ds_map lookup
+  and two further lookups keyed by the counter), then decides whether the
+  slot is asking to cast.
+- **The key state comes from the profile slot.** For each bar slot the gate
+  reads `Input_Device_Manager_obj.playerProfileSlot[<third argument>]`, and
+  from that entry the `inputState` array, at an index an unnamed helper
+  derives from the slot counter (the derivation was not read), and compares
+  it against one state value (which value means "pressed" was not read). It
+  does this on 15 paths. § 10.4 measured `inputState` on `Profile_Manager_obj`
+  (3673), 78 entries resting at 1. The profile slot's entry is plausibly a
+  `Profile_Manager_obj` instance: it also carries the `inputSimMap` that
+  object's Create event makes (next bullet). **Measured** in Live 1
+  (`slot-keys`): the entry read was `playerProfileSlot` entry 1 of
+  `Input_Device_Manager_obj` instance 0, and each bar key moved one
+  `inputState` entry of it, the bar column the slot sits on: Q entry 3, E
+  entry 4, R entry 5, Y entry 6 (entries 26 and 25 moved together with Q and
+  E, for a reason not read). An entry rests at 1, reads 4 on the press frame,
+  3 while the key is held and 2 on the release frame, then 1 again. The
+  entries of the other bar columns were not measured.
+- **Writing the press value inside the gate casts the slot (measured).** In
+  Live 1 (`cast-input`), writing 4 into a slot's `inputState` entry just
+  before each local `CheckTalentUse` call, and restoring it after, cast that
+  slot's skill with no key pressed (Mana Orb on column 3). With the value
+  forced on every call for more than 480 frames (about 5.6 s at the session's
+  ~85 fps), Mana Orb was cast once (`cast-gate`). What refused the repeats
+  (its cooldown, mana, the orb still being alive, or how the forced press is
+  seen) was not read, and Mana Orb's cooldown was not read in that session:
+  that the game's cooldown still applies to a forced press is **not
+  established**, and neither is whether the forced cast still charged mana.
+  An immediate key recast of Mana Orb has been measured to work (§ 7.3, the
+  `effect=` count reading 2 right after a recast), so the window may well be
+  longer than the cooldown; talent 253's cooldown is the next read. The same
+  write on Soul Spurn's column switched the toggle on and off 13 times in 600
+  frames (`toggle-flips`), and on an empty column it called no `TalentUse` at
+  all (`empty-slot`).
+- **The same write on Healing Zone and Soul Spurn (measured, 2026-10-19).**
+  In the Mark 1 research's Mod live 1
+  ([Mod live 1 results](../ForgePact/docs/mark1-set-research.md#mod-live-1-results);
+  the same character and game build, a later research DLL, at about 144
+  frames a second), writing
+  4 into `inputState[4]` (E, column 4) for one gate call cast Healing Zone,
+  once inside a walk and once standing, each counted by the probe's
+  `TalentUse` row; the same write made soon after a key cast of it cast
+  nothing (plausibly its cooldown, which was not read). One such write into
+  `inputState[5]` (R) switched Soul Spurn on, its on-state object
+  `White_Mage_Soul_Spurn_AOE_obj` appearing 19 frames later
+  (`toggle-settle`). A second write switched it off 20 frames after the
+  press, and it was on again 57 frames after it with no further write; what
+  switched it back on was not read. Whether a forced cast costs mana is still
+  **not established** (`cast-mana`, not-observed): no number or bool element
+  of the player's `pSt` changed on a key cast or a forced one, and none
+  changed in any `pSt` watch of that session (which reads only those kinds),
+  so nothing shows mana is held there.
+- **The same write on three columns at once, every gate call (measured,
+  2026-10-19).** In the Mark 1 research's Mod live 2
+  ([Mod live 2 results](../ForgePact/docs/mark1-set-research.md#mod-live-2-results);
+  the same character and game build, the Mark 1 set's shipped automation on a
+  research DLL, at about 144 frames a second), the press value was written
+  into Q's, E's and R's `inputState` entries inside every local
+  `CheckTalentUse` call, with Shadow Bolt on Q, Healing Zone on E and Heavenly
+  Fire on R (both no-cooldown skills read `abilityCooldown` 0.25, Healing
+  Zone 14). Over 1350 gate calls (one a frame) Shadow Bolt cast 20 times,
+  Healing Zone once, and a cast of Heavenly Fire was **not observed** in any
+  of them (`on-automation`), with no read, write or restore failing. Why it
+  never cast is **not established**: Shadow Bolt's column may have been
+  served first on every call, or Heavenly Fire may not be castable through
+  the press write, in town, or within the mana Shadow Bolt's casts left (no
+  mana value is known), and no session records a cast of Heavenly Fire, by
+  key or forced, that would tell these apart. In which order the gate serves
+  the asking slots, and whether it serves more than one a call, is likewise
+  **not established** (the slot loop's order was not read). An empty column
+  (Y) was skipped every call and never pressed.
+- **The game's refusal holds a forced press (measured, 2026-10-19).** In the
+  same session Healing Zone's column, pressed every gate call, cast once in
+  1350 presses (`gate-kept`), and over 3600 frames with no key it was recast
+  at intervals of 661, 910, 1071 and 501 frames, each rise of
+  `White_Mage_Healing_Zone_obj`'s count marking one (`cooldown-recast`; the
+  probe counted four casts against five rises in that window, not
+  reconciled). Its `abilityCooldown` reads 14; 14 seconds would be 2016
+  frames at that frame rate, longer than every interval, so the value's unit,
+  and what makes the intervals differ, are **not established**.
+- **Pressing one column a call casts every skill on the bar (measured,
+  2026-10-20).** In the Mark 1 research's Mod live 3
+  ([Mod live 3 results](../ForgePact/docs/mark1-set-research.md#mod-live-3-results);
+  the same character, game build and frame rate, the set's turn rule on a
+  research DLL), the press value was written into one column's `inputState`
+  entry per local `CheckTalentUse` call, the column whose last landed cast
+  was longest ago, on the same bar as above. Over 4590 gate calls with no key
+  Shadow Bolt cast 31 times, Heavenly Fire 30 and Healing Zone 3
+  (`on-automation`), and a key cast of each no-cooldown skill had counted
+  first (`casts=239:1,245:1`). So Heavenly Fire casts by key on this
+  character in town and through the press write, and the previous bullet's
+  zero came from pressing several columns in one call; which of them the gate
+  serves then is still **not established**. A landed cast is seen as a local
+  `TalentUseSetSpeed` call during the gate's call (§ 7.8): the set's count of
+  those per column matched the probe's `TalentUse` count per talent exactly,
+  alone (4 of 4) and beside the others (31, 3 and 30), and every such call it
+  saw was one of them (`turn-landed`).
+- **One Healing Zone cast can leave two zone instances (measured,
+  2026-10-20).** In the same session (`landed-control`), with Healing Zone
+  alone on the bar and cast by the press write, a rise of
+  `White_Mage_Healing_Zone_obj`'s instance count went from 0 to 2 at one cast
+  in each of two windows while the probe's `TalentUse` row counted one, and
+  in a 3600-frame window beside Shadow Bolt and Heavenly Fire four rises stood
+  against three casts, the extra instance lasting 88 frames
+  (`cooldown-recast`). So the instance count is at least the number of casts,
+  not equal to it, which accounts for the five rises against four casts
+  above. What the second instance is was not read. Alone on the bar, Healing
+  Zone was recast 1575 frames apart in both windows; beside the other two,
+  1064, 587 and 1627 frames apart, so its `abilityCooldown` unit is still
+  **not established**.
+- **The game has its own input simulation.** `gml_Script_InputSimulate`
+  (1903) takes a profile slot index, a key and a value, and stores the value under
+  the key in that profile slot entry's `inputSimMap` (a ds_map). That map is
+  read by `Profile_Manager_obj`'s Begin Step event (eight references) and
+  `Controller_obj`'s Begin Step event (four), both of which run before the
+  Step event that reaches the gate. `InputCheck` and `InputPressed` read
+  `playerProfileSlot` and `inputState` the same way the gate does. No direct
+  caller of `InputSimulate` was found (not observed), what its keys are and
+  how the Begin Step folds the map into `inputState` were not read. It is a
+  candidate cast route that leaves the game's own gate in charge, and unlike
+  posting a key to the window it does not depend on which key is bound.
+- **The queue is a second way into the same slot.** `abilityQueue` and
+  `mobileTalentPressed` are global arrays (both are created in
+  `gml_GlobalScript_DefineGlobals`), indexed by the bar slot counter. When the
+  slot's key state does not ask for a cast, the gate reads the slot's
+  `abilityQueue` entry, and when that is not set either, its
+  `mobileTalentPressed` entry; only when all three are unset does it move on
+  to the next slot. Later it writes both entries of the slot back with 0, and
+  one other path writes 1 into `abilityQueue`'s entry 0. So an entry is a
+  0-or-1 flag per bar slot. `PlayerMovement` writes `abilityQueue` at five
+  sites (values not read); nothing else found references it. `autoAim` is a
+  global array read the same way, per slot. Whether setting a slot's
+  `abilityQueue` entry makes the gate cast that slot is **not established**:
+  Live 1 did not try it, because the input write cast first. **Measured** in
+  Live 1 (`queue-observed`): over two key presses with one cast, none of the
+  first four entries of `abilityQueue`, `mobileTalentPressed` or the player's
+  `stackSkillList` changed from one frame to the next. The watch reads entries
+  0-3 of each array only, once a frame at the frame's end, so an entry of a
+  later slot, or one set and cleared inside one gate call, would not show;
+  whether a key cast goes through the queue is therefore **not established**.
+- **`stackSkillList` is a variable of the gate's own `self`**, read at five
+  sites and taken for writing at two.
+- **The cast itself.** Per slot that asks, the gate calls `GetTalentInfo`
+  (1788) and `TalentRequirement` (3769), and then, at its one `TalentUse`
+  (3829) site, calls it with the player, the slot's talent id, its own third
+  argument and false (the arguments § 7.2 measured on a key cast). It also
+  asks the stat dispatcher for id 199 (no case in the dispatcher's table as
+  [skill sliders' reading](../ForgePact/docs/skill-sliders-research.md#returnspecificstat-the-dispatchers-case-table)
+  lists it) and calls `PlayerManaUpdate` and `PlayerHpUpdate`.
+- **An earlier negative does not cover this reader.** § 10.4 measured that
+  writing `inputState` from the frame callback did nothing for the interact
+  key, whose check reads the keyboard directly, and that write landed at
+  `EVENT_FRAME`, after the frame's readers ran. A write inside the gate's own
+  call, just before it reads, does cast (**measured**, Live 1, above).
+
+[Mark 1 research, Static reading](../ForgePact/docs/mark1-set-research.md#static-reading)
+
+### 7.8 What a cast does to movement
+
+From the same reading as § 7.7 (2026-10-13, static unless marked). The
+**measured** parts are from the same Live 1 session
+([Mark 1 research, Live 1 results](../ForgePact/docs/mark1-set-research.md#live-1-results)).
+
+- **`gml_Script_TalentUseSetSpeed` (3830)** has two direct callers found,
+  `TalentUse` (3829) and `gml_Script_CA_playerTalentActive` (368), one site
+  each. It asks the stat dispatcher for ids 68 and 69 (the two attack speeds)
+  and 106 (faster cast rate), and calls `GetTalentCooldown`, `GetTalentInfo`,
+  `ReturnSubTalentLevel`, `LoadSubTalentDamage`, `SetCooldown`,
+  `RefreshMouseMove`, `GetPlayerDevice` and `IsMyPlayer`. Besides the cast
+  speed it writes six entries of the player's `playerEffect` array (entries
+  40, 46, 79, 182, 231 and 282; what each entry means is not read) and sets
+  `image_speed` on an instance or object it names (which one is not read). It
+  references no movement-speed name (`hSpeedFactor`, `vSpeedFactor`,
+  `mobileSpeedFactor`, `moveSpeed`). So if a cast slows the caster, it is
+  plausibly through a `playerEffect` entry or the movement step's own state,
+  not a movement variable this script names. **Measured** in Live 1
+  (`dbg-cast-speed`): an x64dbg logpoint on its entry logged 17 hits over the
+  session's key casts, every one returning to the one direct call site in
+  `TalentUse`; `CA_playerTalentActive` was not observed calling it.
+- **A cast slows the walk briefly (measured).** In Live 1
+  (`penalty-baseline`), Healing Zone cast one second into a three-second walk
+  cut the walk's step from about 6.0 px a frame to about 3.9 px (about 0.65)
+  for about 21 frames, after which it climbed back to 6.0 px; the walk
+  covered 6.5% less than without the cast. The player members that changed
+  after the cast (`playerSequenceTopPrev`, `playerSequenceBottomPrev`,
+  `playerSequenceDirection`, `manaArrayPos`) did not settle back within 90
+  frames, so none of them follows the penalty's course; the member that
+  holds the penalty was not observed (`penalty-vars`).
+- **The slowdown has a flat part and a ramp, and `playerEffect[199]` follows
+  the ramp (measured, 2026-10-19).** In the Mark 1 research's Mod live 1
+  ([Mod live 1 results](../ForgePact/docs/mark1-set-research.md#mod-live-1-results)),
+  at 6.94 ms a frame, a Healing Zone cast one second into a walk dropped the
+  step from 2.989 px to 1.943 px (0.650) for 57 frames, then a 16-frame ramp
+  brought it back (`penalty-control`). Element-wise watches from the cast
+  showed `playerEffect[199]` falling from 1 to 0.65 on the cast frame and
+  climbing back to 1 frame for frame with the ramp, 57 to 73 frames after
+  the cast (`penalty-watch`); so `playerEffect[199]` is the cast's speed
+  factor during the ramp. Holding it at 1 during `PlayerMovement` removed the
+  ramp and left the 57 flat frames at 0.650 (`penalty-lever`), so the flat
+  part's 0.65 comes from somewhere that hold does not reach, which is **not
+  established**. `playerEffect[204]` turned from true to false 56 frames
+  after the cast, the frame before the ramp, a candidate for the flat part
+  that was not held. The cast also turned `playerEffect[205]` from true to
+  false and changed `playerEffect[196]` and `playerEffect[250]` 18 frames
+  after it; `playerEffect[54]`, `[56]` and `[192]` count down by one a
+  frame. The movement speed stat's answer did not move through the slowdown
+  (151 on every frame, `penalty-stat`). The `pst` watch (number and bool
+  entries only; how many of the 54 it covered was not recorded; no positive
+  control within `pSt` in that session) saw no change at a frame boundary in
+  the 90 frames after a cast, which is not observed, not a negative: the
+  cached `pSt` values `PlayerMovement` reads remain an open candidate for
+  the 57 flat frames (**not established**, see the `pSt` bullet in § 7). Of
+  the player's builtin variables only `image_index` changed. The slowdown lasted more frames than Live 1's 21 at
+  about half this frame rate; whether it is timed in frames or in time is
+  **not established**. **Measured** too (`dbg-cast-active`): an x64dbg
+  logpoint on `CA_playerTalentActive` logged no hit over a standing Healing
+  Zone cast while the control logged, so it is not on a key cast's path (not
+  observed).
+- **Casts every 60 frames keep `playerEffect[199]` at 0.65 (measured,
+  2026-10-19).** In the Mark 1 research's Mod live 2
+  ([Mod live 2 results](../ForgePact/docs/mark1-set-research.md#mod-live-2-results)),
+  with Shadow Bolt cast about every 60 frames by the set's automation and the
+  half walk on, `playerEffect[199]` read 0.65 on every watched frame of three
+  bonus-on walks, rising to 0.670833 for one frame at each Shadow Bolt cast;
+  no frame read 1. So whether the cast's slowdown stacks on a halved walk or
+  replaces it was **not observed** (`on-speed`, `on-penalty`,
+  `penalty-stack`). One consistency observation, not a measurement: those
+  windows' modal step, 0.775 px, is 0.325 of the same session's unlevered
+  2.385 px, and 0.325 equals 0.5 × 0.65, what stacking would give; the
+  frames behind it are all under the slowdown, so nothing compared them with
+  an unslowed bonus-on step. The watch's 400-line reply cap ended each watch
+  after about 126 of its 240 frames.
+- **The cast's slowdown stacks on the half walk (measured, 2026-10-20).** In
+  the Mark 1 research's Mod live 3
+  ([Mod live 3 results](../ForgePact/docs/mark1-set-research.md#mod-live-3-results);
+  the same character and build, 6.93 to 6.94 ms a frame), with Healing Zone
+  alone on the bar and the set's half walk on, a walk's 86 watched frames at
+  `playerEffect[199]` = 1 stepped 1.192 px; an automated Healing Zone cast
+  then dropped `playerEffect[199]` to 0.65 and the step to 0.775 px, 0.650 of
+  the pre-cast step, for 76 frames (one double step among them), and a
+  16-frame ramp brought it back to 1.192 px (`on-penalty`, `penalty-stack`).
+  So the slowdown multiplies the halved walk, and under a cast the set walks
+  at 0.325 of the unlevered step, which the previous bullet's windows showed
+  by arithmetic and this one measured. The flat part ran 76 frames against
+  Mod live 1's 57 for a key cast without the set at the same frame time; why
+  it ran longer is **not established**.
+- **`manaArrayPos` is plausibly the mana graph's ring index, not mana.**
+  **Static reading (2026-10-14, unannotated)**, through the ghidra MCP, of
+  `gml_Script_PlayerManaUpdate`: its body came out with no variable names, but
+  it reads an array at a few small constant indices and advances a position
+  that wraps back to the start at 100, writing into a 100-entry history array.
+  That shape fits Live 1's observation that `manaArrayPos` rose by one per
+  update and never settled back after a cast: it is plausibly the write
+  position of a 100-sample mana history (the kind a mana graph draws), so a
+  change in it says a mana update ran, not how much mana the player holds.
+  Where current mana is held is **not established** (plausibly an entry of
+  `pSt`, the player's stat values, unread).
+- **`PlayerMovement` (2774)** calls `TalentUseClass` (3833) once and
+  `CheckTalentUse` once, reads its own `playerEffect` at 21 sites and takes it
+  for writing at 19, and reads `pSt` (the player's stat values) at 32 sites.
+  The player object's Step event calls `TalentUseClass` at five more sites.
+  Which of these holds the caster still while a skill is cast is **not
+  established**. **Measured** in Live 1: the player's `pSt` is an array of
+  54 entries, not a struct or an instance, so a watch of named members reads
+  nothing from it. **Not observed** in Mod live 1 (2026-10-19, above): the
+  element-wise `pst` watch saw no change at a frame boundary in the 90 frames
+  after a cast, nor in the 60 after a key cast or a forced one. That watch
+  reads only number and bool entries (an array, struct or reference entry is
+  left out without a word), how many of the 54 it covered was not recorded,
+  and no `pSt` element changed in any watch of the session, so it had no
+  positive control within `pSt`. The cached `pSt` values `PlayerMovement`
+  reads therefore remain an open candidate for what holds the cast
+  slowdown's 57 flat frames (**not established**).
+
+[Mark 1 research, Static reading](../ForgePact/docs/mark1-set-research.md#static-reading)
+
+### 7.9 Procs: how the game fires a skill without a cast
+
+Written for ForgePact#166 (2026-10-22), when the owner asked whether Mark 1's
+automation could fire a skill the way the game fires an item proc, with no
+cast time. **Static reading** (2026-10-22, in our own words) except where
+§ 7.2 measured it: one headless `FindCallers.java` byte scan of the direct
+call sites of `TalentUseClass`, `TalentUse`, `TalentUseSetSpeed`,
+`SetCooldown` and `GetTalentCooldown` (positive control: `CheckTalentUse`
+called from `PlayerMovement`, found), a `ListCallsIn.java` listing of
+`TalentUse`'s calls, and annotated decompiles of `EnemyDestroyKillProc` and
+`SetCooldown`. The ghidra MCP timed out on `TalentUse` and `TalentUseClass`,
+so their bodies were not read. Calls through the script table or a method
+value are invisible to the scan: a caller missing below is **not observed**.
+
+- **A key cast.** `CheckTalentUse` (the gate: the key, the requirement, and
+  the mana update after it, § 7.7) calls `TalentUse`, whose direct callers
+  are `CheckTalentUse`, `MercenaryAbilities`, `skillsBasic` (two sites) and
+  one unnamed function. `TalentUse` calls `TalentUseSetSpeed` (the wind-up:
+  cast and attack speed, the `playerEffect` writes and `image_speed`, § 7.10),
+  `SetCooldown` at one site, `NetworkSendClientTalentUse`, `TalentUseClass`
+  at one site, `ReturnSpecificStat` 27 times and `GetTalentInfo` 11 times.
+  **Measured** (§ 7.2): the player's own `TalentUseClass` call comes about 19
+  frames after `TalentUse`; that delay is the cast time.
+  `TalentUseSetSpeed`'s direct callers are `TalentUse` and
+  `CA_playerTalentActive`.
+- **`TalentUseClass`'s direct callers**: `enemyCollisionDamageParent` (two
+  sites), `enemyCollisionProjectile`, `EnemyDestroyKillProc`,
+  `EnemyKillAfterShock`, `EnemyKillCelestialCreation`, `PlayerTakeDamage`,
+  `ProjectileCollision00Skills` (two), `SummonAttackScript` (two),
+  `skillsBasic` (two), `CA_playerTalentActive`, `PlayerMovement`,
+  `TalentUse`, `TalentUseClass` itself (two, the chained sub-skills of
+  § 7.2) and 15 sites in unnamed functions.
+- **`SetCooldown`'s direct callers**: `TalentUse` (one site),
+  `TalentUseSetSpeed` (two), `TalentUseClass` (one),
+  `enemyCollisionDamageParent` (two), `enemyCollisionProjectile`,
+  `EnemyDestroyKillProc`, `CA_playerTalentActive`, `TalentsNomad` (two),
+  `TalentsViking` and `TalentsRelics`. `GetTalentCooldown`'s:
+  `TalentUseSetSpeed`, `TalentsRelics`, `DrawMobileTalentIcon`, the Create
+  events of `Player_Talent_Tooltip_obj` and `UI_Hud_Talent_obj`, and one
+  unnamed function.
+- **The proc paths' shape.** In the hit and kill paths
+  (`enemyCollisionDamageParent`, both sites, `enemyCollisionProjectile` and
+  `EnemyDestroyKillProc`) a `SetCooldown` site comes just before the
+  `TalentUseClass` site, and none of these functions calls `TalentUse`.
+  `PlayerTakeDamage` (the struck path) calls `TalentUseClass` and has no
+  direct `SetCooldown` site of its own; how it paces its proc was not read.
+  So the game fires an item proc straight into `TalentUseClass`, and paces
+  it with its own `SetCooldown` entry where it paces it at all.
+- **What that skips**: the gate, so its key read, its requirement check and
+  its mana update; `TalentUse`, so the wind-up and the cast speed that
+  `TalentUseSetSpeed` applies; and the cooldown `TalentUse` and
+  `TalentUseSetSpeed` set.
+- **The kill proc's call** (`EnemyDestroyKillProc`, annotated): it first
+  calls `SetCooldown` with five arguments (its own first two arguments, a
+  value halved, and two more), then `TalentUseClass` with ten (the same two,
+  the target's x and y, a direction, and a random number from 1 to 65000).
+  Which argument is the talent and which the level was not read.
+- **`SetCooldown`** keeps its entries in two lists in the game's protected
+  data, `cooldownList` and `cooldownProcList`, one branch each. Which
+  argument picks the list was not read.
+- **The one measured case** (§ 7.2): the double-cast proc is a
+  `TalentUseClass` call with `self` = `Universal_Double_Cast_obj`, a4
+  false and a6, a7 a world x and y, with no `TalentUse` before it.
+- **Not established:**
+  - `TalentUseClass`'s arguments besides a0 and a4 to a7 (§ 7.2 recorded
+    those of the player's call; a1 to a3 and anything after a7 were not
+    recorded);
+  - what `TalentUseClass`'s own `SetCooldown` site sets, and when it runs;
+  - which level a proc casts at: whether it is passed in or read from the
+    player's talents.
+- **Measured 2026-10-22** (ForgePact's Mark 1 Stats live 1, slot 14
+  "Sorak", White Mage, in town; `tgprobe hook TalentUseClass` with
+  `tgprobe verbose on`, `skillprobe call`, and `mark1probe hook`'s
+  `TalentUse` row as the count of key casts):
+  - **The player's own call** on a key cast of Shadow Bolt (239) and of
+    Healing Zone (252): self and other `Player_obj`, argc 10, a0 the talent
+    id (a real), a1 a ref (kind 15) to the player's own instance, a2 1, a3
+    false, a4 true, a5 0, a6 and a7 -1 (a8 and a9 were not printed). Inside
+    it the game makes a second `TalentUseClass` call with a0 243 (an
+    integer), a4 false and a5 55; what talent 243 is was not read. The
+    double-cast proc's call in the same session read self
+    `Universal_Double_Cast_obj`, a0 239 (or 252), a1 the player's ref, a4
+    false, a5 0 or 43, a6 109.17 and a7 3.15, which is not the player's
+    position (912, 960); what a6 and a7 are there is not established.
+  - **Two call shapes cast both talents with `TalentUse` unmoved**, through
+    `skillprobe call TalentUseClass Player_obj 0 … confirm` with argc 8:
+    shape A, the player's own arguments as logged (a4 true, a6 and a7 -1),
+    and shape B, the same with a4 false and a6, a7 the player's x and y.
+    Each raised the skill's `effect=` count from 0 to 1 (Shadow Bolt's
+    bolt, Healing Zone's zone in the screenshot) with no throw, while the
+    `TalentUse` row stayed at 0: no wind-up. Shape A also made the nested
+    243 call (and for Healing Zone a double-cast proc); shape B made
+    neither.
+  - **A direct call sets no cooldown the key respects.** Control: Healing
+    Zone pressed twice 0.5 s apart cast once. After a shape-B call of
+    Healing Zone, its key pressed within 1 s cast it again.
+  - **The skill's strength is the same.** `White_Mage_Healing_Zone_obj`
+    read after a key cast and after a direct call had `heal` 17,
+    `augmentLevel` 0, `deadly` 1, `skillId` 252, `isProc` false and
+    `tick_frequency` 144 in both; only `deltaTimer`, `destroyTimer`,
+    `inviewCheck`, `trail_x` and `trail_y` differed. So with a2 at 1 the
+    direct call casts at the player's strength; whether a2 is the level is
+    still not read.
+  - **A direct call is made regardless of held input.** With the right
+    button held 8 s (its skill casting 16 times), Mark 1's direct calls
+    kept being made and returning (16 in the window); with Mana Orb's key
+    held 5 s under the automation's lockout too (13), and the key cast
+    none. Those calls passed the player in a1 as a number rather than a
+    ref, so they were counted as calls that returned, not as casts.
+  - **A held cooldown skill's repeat**: Healing Zone's key held 30 s cast 3
+    times over 31.25 s (10.42 s each, crude: window over casts) at Skill
+    Haste 56 and Faster Cast Rate 106, against a cooldown of 14 / 1.28 =
+    10.94 s and a cast time of about 0.49 s; closer to the longer of the two
+    than to their sum (§ 7.10).
+  [Mark 1 Stats live 1 results](../ForgePact/docs/mark1-set-research.md#stats-live-1-results)
+
+[Mark 1 research, the 2026-10-22 playtest](../ForgePact/docs/mark1-set-research.md#the-2026-10-22-playtest-stats-cast-priority-and-held-input),
+[Playtest static reading](../ForgePact/docs/mark1-set-research.md#playtest-static-reading)
+
+### 7.10 The skill bar's buttons, mana and the cast's speed
+
+Written for the same playtest's second amendment (2026-10-22): a skill under
+Mark 1's automation cannot be cast by hand, its bar icon is drawn grey, each
+proc fires at an interval computed from the skill's cooldown and cast speed,
+and a mana cost counters the free procs. **Static reading** (2026-10-22, in
+our own words) except where earlier sections measured it: the ghidra MCP's
+decompiles of `PlayerManaUpdate`, `StatMaxMana`, `StatManaPerKill`,
+`ManaPerHit`, `GetTalentCooldown`, `DrawHudAbilityButtons` and the talent
+HUD's methods; one headless slot-reference scan (`FindSlotRefSites.java`) of
+`drawButton`, `manualDisable` and `manaCost`; and long headless decompiles of
+`UI_Talent_Button_obj`'s Draw GUI event, `StatManaReplenish` and
+`TalentUseSetSpeed`. `TalentUse` and `DrawHud` timed out.
+
+- **The bar's buttons.** `DrawHudAbilityButtons` draws no icon itself: it
+  calls the talent HUD's `m_SetupTalentButtons` method and creates UI nodes.
+  The elements of `UI_Hud_Talent_obj.row0` (whose `navBbox*` members
+  ForgePact's Mark 1 border already reads) are `UI_Talent_Button_obj`
+  instances: the slot scan found `drawButton` written and read only by the
+  talent HUD's setup method and that object's Create and Draw GUI events.
+- **The button's Draw GUI blend.** That event draws the icon sprite
+  (`sprite_index`, `image_index`, at `x`, `y`, `image_xscale`,
+  `image_yscale` and `image_angle`) with a blend colour that starts white.
+  The blend is set to a dark grey, 3158064 (RGB 48,48,48), when the button's
+  own `enabled` reads false or when `TalentRequirement` refuses the talent.
+  So the game's own "cannot use" look is the icon drawn with that dark-grey
+  blend. Three more blends are set in branches whose conditions were not
+  fully read (they read the player's `pSt` and the game's protected data):
+  9474192 (RGB 144,144,144), 9250839 and 138 (in GameMaker's colour order,
+  red in the low byte: RGB 23,40,141 and RGB 138,0,0). The event also draws
+  a cooldown sweep (`draw_rectangle_cd`).
+- **The key the gate reads per column** is `inputState` of the profile
+  entry, column c at entry c (Q 3, E 4, R 5, Y 6, **measured**, § 7.7
+  `slot-keys`): 3 held, 4 pressed, 1 resting.
+- **Where mana lives.** `PlayerManaUpdate` (the gate calls it, § 7.7) reads
+  the player's `pSt` entries 17, 18 and 23 and gets and sets their values
+  through the game's protected store (an extension's `GetVariable` and
+  `SetVariable`). It compares the value it finds with the last entry of its
+  100-sample `manaArray` history (`manaArrayPos` is that history's write
+  position, § 7.8) and, on a mismatch, takes `debug_get_callstack` and can
+  call `ReportClient` or `show_message_async`. So a mana value changed
+  outside the game's own update is plausibly detected.
+- **The dispatcher ids around mana** (`ReturnSpecificStat`'s case map, § 7.5):
+  37 `StatMaxMana`, 42 `StatManaReplenish`, 46 `StatManaPerKill`, 147
+  `ManaPerHit`, 340 `StatManaCost`, 103 `StatSpellHaste` and 106
+  `StatFasterCastRate`. The item keys that feed them
+  (`hs_stat_semantics_s10.json`, labels measured in Item Truth's captures):
+  60 `to Mana`, 61 `Mana Increased by`, 63 `Replenish Mana`, 64 `Mana
+  stolen per Hit`, 65 `Mana per second`, 66 `Mana After each Kill`, 167 `of
+  Damage Taken Recouped as Mana`, 200 `Mana Costs decreased by`, 385 `Mana
+  Regeneration Increased by`, and 38 and 39, Energy (4 mana a point).
+- **`StatManaReplenish`** (partly read) asks the dispatcher for Energy
+  (id 20) and scales it by 0.175, asks ids 43, 37 (maximum mana), 44 and
+  309, multiplies 43's answer by 37's when 43's is above zero and floors the
+  product, and adds the player's buff values. So the base replenish follows
+  Energy, and maximum mana enters only through id 43's part. `StatMaxMana`
+  is id 37's getter; its total is element 0 of the array it returns, as for
+  the other getters (§ 7.5).
+- **`TalentUseSetSpeed`, the cast's speed** (partly read): it takes the
+  Faster Cast Rate answer (id 106) times 0.01, adds the talent's own
+  sub-talent cast-speed bonuses (`LoadSubTalentDamage` times 0.01, from a
+  24-case table by talent), and divides a per-talent base (from
+  `GetTalentInfo`'s entry 66) by one plus that sum; ids 68 and 69 (attack
+  speed) go into the same speed on another branch. So a cast's time has the
+  shape base / (1 + Faster Cast Rate / 100).
+- **When a key cast's cooldown starts** (same body): `TalentUseSetSpeed`
+  reads `GetTalentCooldown` first and, for a cooldown above a small
+  threshold, calls `SetCooldown` with that cooldown times `game_get_speed`
+  (steps), at the start of the wind-up. So a held key's repeat of a
+  cooldown skill is plausibly the longer of its cooldown and its cast time,
+  not their sum. A talent's `abilityCooldown` of 0.25 means it has no
+  cooldown (§ 7.1, **measured**); Skill Haste divides a running cooldown by
+  1 + haste / 200, the total stopped at 200 (§ 7.5, **measured**), and
+  `GetTalentCooldown` reads no Skill Haste (§ 7.5).
+- **Measured 2026-10-22** (ForgePact's Mark 1 Stats live 1, slot 14
+  "Sorak", White Mage, in town, at 2560 × 1440):
+  - **A draw inside a bar slot from `DrawHudBuffs` does not show.** Icons
+    redrawn darker, or a dark box drawn over them, from the `DrawHudBuffs`
+    hook changed no slot's look: the slot boxes' mean luminance read the
+    same with the redraw on and 18 s after it went off for Q (44.9 against
+    46.2) and R (54.4 against 54.4), and E's and Y's darker reads were the
+    game's own (E's cooldown, Y cast continuously). A red outline drawn
+    from the same hook around the slots shows. Plausibly the
+    `UI_Talent_Button_obj` nodes draw their icons after `DrawHudBuffs`, over
+    anything drawn inside a slot (an inference).
+  - **A button's `enabled` false draws the game's dark look.** Writing
+    `enabled` false on the four automated columns' buttons drew Q, E, R and
+    Y dark in the game's own "cannot use" look; the skill's tooltip still
+    showed on hover, and a left click still opened the bar editor.
+  - **A left click on a bar icon opens the skill-bar editor** and casts
+    nothing: the bar shows the empty slots Y, U, I, O, H, J and K to the
+    right of R and a skill list above the bar. A left click on open ground
+    closes it; Escape does not. To bind, the slot, then the skill in the
+    list (the owner bound Shadow Bolt to Y this way). A right click on an
+    icon shows only the skill's tooltip.
+  - **Mana refills fast.** Sorak's mana rose from 983 to 2352, its
+    maximum, within 10 s (at least 137 a second) with id 42's original at
+    415, and five key casts of Shadow Bolt 2 s apart left the HUD at
+    2352 / 2352 before and after: with Mana Orb on the bar (the owner: it
+    raises mana regen) the HUD showed no key cast's cost. The unit of id
+    42's answer is still not established.
+  - **The HUD's maximum mana follows id 37's dispatcher answer.** With
+    Mark 1 answering id 37 with 0.4 × its original (2352 to 940.8), the
+    HUD read 941 / 940.80 within 3 s.
+  - **How often the game reads mana** (debugger logpoints at each
+    function's own address, with a positive control on `PlayerMovement`
+    logging about 73 a second): `StatManaReplenish` none in a 10.26 s idle
+    and 20 over five key casts in 14.7 s; `StatMaxMana` 11 in the idle and
+    14 over the casts; `PlayerManaUpdate` none in the idle and 25 over the
+    casts. Mana was not read during that idle and was plausibly at its
+    maximum, so the idle zeros do not say whether the regen calls them
+    while mana is below it; which code applies the regen is still not
+    established.
+  - **The held right button's input**: `inputState` entries 2, 27 and 40
+    of the profile read 4 for one frame, then 3 for as long as it was held.
+  - **A held key's repeat and the cast's speed**: Shadow Bolt's key held
+    10 s cast 24 times at Faster Cast Rate 106 (about 62 gate frames
+    between casts, 417 ms) and 30 times with 100 more Faster Cast Rate
+    added (333 ms). Base = interval × (1 + FCR / 100) gives 0.858 s and
+    0.973 s, 13.4% apart, with the second FCR read as 192 (the cached
+    read, which drifted between 54 and 106 over the session); the shape
+    base / (1 + FCR / 100) holds only that loosely.
+  [Mark 1 Stats live 1 results](../ForgePact/docs/mark1-set-research.md#stats-live-1-results)
+- **Static reading (2026-10-23): the player's mana regen tick.** From the
+  ghidra MCP's decompiles of `playerUpdateTimerMana`, `PlayerRegenSet`,
+  `SetRoomSpeed` and `stepMercenaryTimers`, a headless decompile of
+  `PlayerUpdateTimers` and `Timer_obj`'s Step, local byte scans (positive
+  controls: id 64's askers as § 7.8 lists them, and `CheckTalentUse` called
+  from `PlayerMovement`) and a names-only trace of `Player_obj`'s Step; in
+  our own words:
+  - **The regen is `playerUpdateTimerMana`**, called once, directly, from
+    `Player_obj`'s Step (the only direct caller found). `PlayerUpdateTimers`
+    does not regenerate: its one `PlayerManaUpdate` call is the clamp that
+    puts current mana back to the maximum. For the local player only, the
+    tick reads two `pSt` entries as gates (their meaning not read),
+    compares current mana (`pSt` 18) with the maximum (17) and, while mana
+    is below it, asks the dispatcher for id 42, divides the answer by the
+    tick's second argument, rounds the quotient up and adds the result
+    through `PlayerManaUpdate`. Life works the same way in
+    `playerUpdateTimerLife` with id 38. The tick loads 42 as a plain integer
+    constant, which the earlier constant-id scan (address-loaded constants
+    only) could not see; that scan's "only `stepMercenaryTimers` asks 42"
+    was a scan blindness, not an absence.
+  - **What the Step passes is not established.** Just before each tick
+    call it reads a `pSt` entry, asks the dispatcher for id 44 (mana) or 41
+    (life), neither of which has a case in the dispatcher's table, and reads
+    `game_get_speed` twice; how those become the tick's timing and divisor
+    was not read (a long decompile of the Step did not finish).
+  - **The mercenary's version**, `stepMercenaryTimers`, counts a `pSt`
+    timer down by the mercenary's own `deltaFrame` each step, adds the
+    rounded-up answers to 38 and 42 when it runs out, and resets the timer
+    from `game_get_speed`. The local slot scan (RIP-relative references
+    only, the kind that missed id 42 above) and the names-only trace of
+    `Player_obj`'s Step did not show a `deltaFrame` slot; whether the
+    player's timing reads one is not established.
+  - **The game's step rate.** `SetRoomSpeed` reads the video FPS option
+    (protected data entry 76) and sets `game_set_speed` to 60, 120 or 144
+    (options 0, 1, 2; 60 otherwise). GameMaker runs one step per drawn
+    frame (engine behaviour, not read from this binary; consistent with
+    Live 3's measured rate below), so the step rate is the frame rate,
+    capped at that setting.
+    `Timer_obj`'s Step keeps a real-time factor, the frame's `delta_time`
+    over the target frame time, clamped to 0.9 .. 4.0 and stored in the
+    protected data (entry 294); the player's tick and `PlayerUpdateTimers`
+    were not seen to read it (not established: the Step itself was not
+    read).
+- **Measured, Stats live 3 (2026-10-23), from the in-process `vitals`
+  lines' `frame=` and `dt=`:** the game ran about 143 frames a second (S7
+  180 frames in 1258 ms, S8 180 in 1259 ms, S9 600 in 4173 ms), the 144
+  setting. The "about 78" once inferred from the debugger control's 777
+  `PlayerMovement` hits in 10 s is therefore not once a frame (or the
+  logpoints slowed the game; not established which).
+- **Inferred from those windows' measured gains:** each is a whole number
+  of ticks of the answer over ten, rounded up: S7 (answer 140) gained
+  154 = 11 × 14, S8 (answer 92.96) gained 110 = 11 × 10, S9 (answer −140)
+  lost 518 = 37 × 14. The gains alone also fit a divisor of 20
+  (154 = 22 × 7, 110 = 22 × 5, 518 = 74 × 7); the mod's own count of id 42
+  asks it answered (`forced=`) excludes that: it rose 133 to 223 and 223 to
+  323 over the two 10 s switch-off spends, about 9 asks a second, one per
+  tick at about 8.8 ticks a second, not the 17.5 a divisor of 20 would
+  need. So at the 144 setting the divisor is 10 and a tick came every 16.2
+  to 16.4 frames, about 8.7 to 8.9 ticks a second.
+- **The replenish readings side by side.** Read as mana a second per unit
+  of the whole answer, S7 gives 0.874 (§ 16.13). Read on the drain side,
+  S7 minus S8 gives 35.05 mana a second over 47.04 drained units, 0.745 a
+  drained unit, the value ForgePact's `kMark1ReplenishUnit` adopts. The two
+  disagree, and the inference is that the rounding up per tick, not the
+  unit, explains the gap: the drain took 14 − 10 = 4 whole mana a tick
+  where 4.70 was asked. At the shipped 0.745 (answer 140, maximum 2352, two
+  proc columns, 63.14 drained) each tick would take 14 − 8 = 6 mana, about
+  1.12% of maximum mana a second per skill (measured in Stats live 5,
+  below). One mana a tick is about 0.19% of that maximum a second per
+  column, so the drain moves in steps of that size.
+  [Regen and the frame rate](../ForgePact/docs/mark1-set-research.md#regen-and-the-frame-rate-static-reading)
+- **Measured, Stats live 5 (2026-10-23), in process (`vitals` windows,
+  the replenish forced to 1 for the tick counts, every other regen source
+  off the bar), on one character (maximum mana 2352, answer 140):**
+  - **The tick's rate at each frame rate.** At about 143.7 frames a second
+    (VSync off; the Video page's Framerate row drawn disabled and showing
+    60 throughout, the game's own counter at 143 to 144): 219 ticks in
+    25.007 s, 8.76 a second, a tick every 16.4 frames. At 59.9 frames a
+    second (VSync on): 225 ticks in 30.008 s, 7.50 a second, a tick every
+    8.0 frames. The tick rate fell to 0.856 of the higher rate while the
+    frame rate fell to 0.417, so the tick is neither a fixed frame count
+    (which predicts about 0.42) nor held at the same rate a second within
+    10% (which predicts 0.9 to 1.1). Which `game_get_speed` value was in
+    force at each rate was not read, since the setting row showed 60 in
+    both. With the logpoints armed at the higher setting the game slowed
+    to about 60.5 frames a second and ticked 7.66 a second, a tick every
+    7.9 frames, close to the 60 FPS window (inferred: the tick follows the
+    frame rate the game reaches, not only its setting).
+  - **The per-tick amount is the answer over ten, rounded up, at both
+    rates.** Every window's gain was a whole number of ticks of
+    ceil(answer / 10): answer 140 gave 14 a tick (308 and 630 = 45 × 14),
+    answer 76.86 (the drain on) gave 8 a tick (176 and 360 = 45 × 8); the
+    divisor stayed 10 at 60 frames a second (VSync on; the setting row
+    unchanged).
+  - **What the logpoints counted.** The entries of `playerUpdateTimerMana`
+    and `StatManaReplenish` were each hit once per tick, within 5% of each
+    window's ticks (from its gain), and far fewer times than frames (0.12
+    to 0.14 a frame), in both debugger windows, which both ran at about 60
+    frames a second (57.1 and 60.5; the logpoints slowed the 144 setting),
+    so the entries were not counted at 144. The tick script runs only when
+    a tick is due, and `StatManaReplenish` (the replenish getter) is
+    entered once a tick. Counted against each window's ticks from its
+    gain; `dbg-tick` and `dbg-replenish` failed their rule in D1, whose
+    ticks S3's rate overpredicted. Mana gained per hit read 13.3 to 14.8
+    against 14 a tick.
+  - **Mark 1's drain.** At the shipped unit 0.745 with two proc columns
+    each tick took 14 − 8 = 6 mana: 1.117% of maximum mana a second per
+    skill at about 144 frames a second (±0.005) and 0.956% at 60, both
+    inside the owner's 0.95% to 1.15% band.
+  [Stats live 5 results](../ForgePact/docs/mark1-set-research.md#stats-live-5-results)
+- **Not established:**
+  - how the player's tick is timed: Stats live 5 measured 8.76 ticks a
+    second at about 144 frames a second and 7.50 at 60, which fits neither
+    a fixed frame count nor a clock-held rate; the mechanism (the Step's
+    argument and what it reads) was not read;
+  - what the Video page's disabled Framerate row means, and which
+    `game_get_speed` value the game runs with while it is disabled;
+  - whether the tick's divisor depends on the FPS setting: Stats live 5
+    read 10 at about 144 and at 60 frames a second, but the 60 was reached
+    with VSync on while the Framerate row showed 60, disabled, in every
+    window and `game_get_speed` was not read, so the setting itself may
+    not have changed between them;
+  - what the other three blends mean (plausibly mana, cooldown or stacks);
+  - who else writes a button's `enabled`, and what else it changes besides
+    the look (the tooltip and the left click were unchanged, measured
+    above; navigation not read);
+  - whether id 43's part is a share of the mana pool;
+  - a talent's base cast time, and its sub-talent bonus;
+  - whether `GetTalentCooldown`'s base differs from `abilityCooldown` (sub
+    talents);
+  - where current mana can be read from outside the protected store;
+  - any path that casts a bar skill without the gate's key read (a gamepad,
+    `abilityQueue`, `mobileTalentPressed`); a left click on the HUD icon
+    is not one (it opens the bar editor, measured above).
+
+[Mark 1 research, the 2026-10-22 playtest](../ForgePact/docs/mark1-set-research.md#the-2026-10-22-playtest-stats-cast-priority-and-held-input),
+[Playtest static reading](../ForgePact/docs/mark1-set-research.md#playtest-static-reading)
 
 ---
 
@@ -2797,6 +3529,33 @@ The data tables in this section are also in
   for type 43. The two disagree; not resolved.
 - `Enemy_Parent_obj`'s Destroy calls `DropItem` only when the protected HP is 0
   or less. **Static reading.**
+- The only direct call of `DropUniqueItems` found is drop type 45's;
+  indirect calls were not scanned. **Static reading** (2026-10-20, ForgePact
+  #166). A kill's ordinary uniques come from `DropItem`'s own draw on
+  `lootListUnique[LoadSatanicDropTier's answer]`, which runs without
+  `LoadDrops` (§ 13.12). ForgePact's Mod live procedure 7 measured it
+  (`unique-route: satanic-draw`): every natural unique of its Live 1 owner
+  window was built in the draw's scope, and of Live 1b's and Live 1c's all
+  but 4, which were built inside a nested `DropUniqueItems` roll. **Measured**
+  (2026-10-20 and 2026-10-21;
+  [Mod live 7 results](../ForgePact/docs/mark1-set-research.md#mod-live-7-results)).
+- Drop type 45 on ordinary kills, with nothing forced: in ForgePact's Mod
+  live 6 (2026-10-20, slot 14 "Sorak", Hell, from the Outskirts of Inoya,
+  zone level 243), the owner's 8.7 minutes of play ran `LoadDrops` 45332
+  times over 1831 distinct drop arrays, and type 45's chance was 0 on every
+  one of them (`c45-nonzero=` 0, `c45-max=` 0), as on 51 more arrays from
+  the operator's kills. The game made no type-45 call of its own
+  (`game45=` 0), and `DropUniqueItems` was not entered while 4 natural
+  uniques dropped (`vanilla-unique-path: other-path`, with its by-name
+  control passing in the same session). With the research build's
+  `killgate` lever forcing type 45's gate open once per kill, inside the
+  game's own `LoadDrops` call, 57 kills ran `DropUniqueItems` through
+  `LoadDrops`' direct call, 57 on a debugger logpoint and 57 on the detour
+  alike. **Measured** (one session;
+  [Mod live 6 results](../ForgePact/docs/mark1-set-research.md#mod-live-6-results)).
+  Type 45 is not always 0: Mod live 8 counted 7 `DropUniqueItems` calls
+  inside about 2900 outermost `DropItem` calls of the owner's play in The
+  Devil's Breach at raised magic find (§ 13.12). What opened the gate there is not established.
 - A boss kill rolls its part several times. Karp King in Act_01_01 dropped:
   - 11 bellybuttons in 15 kills at the vanilla base of 27;
   - 36 in 12 kills at base 5.4;
@@ -3048,8 +3807,19 @@ and 0 of 150 with `GetRelicQuest` answering true for them.
 - **What a hit's placement reads.** `CreateDefaultParams(sub, b, 1.0)` builds
   its parameter struct from its three arguments, and reads no repository. The
   struct it returns is exactly `{j, b, c}`: `j` the first argument (the sub),
-  `b` the second (the unique's index), `c` the third (1, the unique
-  repository); it has no field `a` (**measured**, Live 2, below). The built
+  `b` the second (the unique's index), `c` from the third (1, the unique
+  repository); it has no field `a` (**measured**, Live 2, below). `c` is not
+  the third argument itself but a real derived from it: 1 when the runner's
+  own truth test passes on that argument, else 0, and a missing or undefined
+  third argument counts as 0. That truth test passes a real or a bool above
+  0.5, an int32 or a reference above 0, an int64 above 0 and a pointer that
+  is not null; undefined fails it, and a string or any other kind raises a
+  runner error. So a caller may pass the class as a bool or as a number and
+  get the same record, and a hook that reads the argument before the game
+  does must apply the same test rather than read it as a number. Which kind
+  the Angelic roll passes was not read; nothing on this path reads the
+  argument after `CreateDefaultParams` has stored `c`. **Static reading**
+  (2026-10-21, ForgePact #166, build 498d5885…). The built
   item's `a` comes from `LootGroundCreate` itself: on both of its branches
   that build an item locally it stores a value of its own into the record's
   `a`, unconditionally and before the item instance exists, then hands the
@@ -3476,6 +4246,217 @@ before and after: experience 16,441,857 to 16,511,032 (+69,175) and kills
 `kills-sum=58` (`kills-vs-save` and `xp-vs-save` `pass`, **measured**). Its
 gold sum (201, from 3 `GoldLogAdd` calls) has no save counterpart in that
 check.
+
+### 13.12 The unique draw inside DropItem
+
+Read on 2026-10-20 for ForgePact's Mark 1 drops (#166), after the drops
+workorder's Live 3 saw four natural uniques drop from kills in Hell while
+`DropUniqueItems` (§ 23.4, § 23.8) was never entered and drop type 45's
+chance was never above 0 on any `LoadDrops` array
+([Mark 1 research, Phase 4](../ForgePact/docs/mark1-set-research.md#phase-4-the-unique-draw-inside-dropitem)).
+The means: the hub's ghidra MCP on build `498d5885…` for
+`LoadSatanicDropTier` and `ReturnRandomSatanic`, and, because `DropItem` is
+too large for the decompiler (a headless decompile timed out on it on
+2026-10-02) and has no body in the MCP, a headless byte scan for direct calls
+(`FindCallers.java`), its call list (`ListCallsIn.java`) and a local
+disassembly listing. The byte scan's positive control, in the same run, was
+`CreateDefaultParams` (2349) with 177 direct sites. Every reading below is
+the order and shape of calls, paraphrased; no listing is reproduced here.
+ForgePact's Mod live procedure 7 then measured the route, k, the reads per
+build, argument 7, the lever's pushed entries reaching the draw and the
+tier-5 check. It ran in three sessions (2026-10-20 and 2026-10-21, slot 14,
+Hell, build `498d5885…`), recorded in
+[Mod live 7 results](../ForgePact/docs/mark1-set-research.md#mod-live-7-results).
+ForgePact's Mod live procedure 8 (2026-10-21, slot 14, Hell, the research
+build that moves the Mark 1 drops and Pocket Elf onto this draw) measured
+the class argument, the stand-ins pushed for a call being built, and
+`DropUniqueItems` running inside a kill's `DropItem` call, recorded in
+[Mod live 8 results](../ForgePact/docs/mark1-set-research.md#mod-live-8-results).
+Each label below says which.
+
+- `DropItem` (1364) has 19 direct call sites, all in unnamed object events,
+  and every one passes 12 arguments. **Static reading** (2026-10-20,
+  ForgePact #166).
+- `DropItem` is the only direct caller of both `LoadCommonDropTier` (2172)
+  and `LoadSatanicDropTier` (2173), each called once and each result kept in
+  a local of its own. That scan ran on these two names alone, so its hit cap
+  was not reached. `LoadSatanicDropTier` answers a whole number from 0 to 5:
+  it sorts the monster's level into brackets (bounds at 200, 123, 100, 75,
+  42, 24 and 15) and, inside each bracket, steps the answer by cumulative
+  random cut-offs. ForgePact's `raredrop satanic` already lifts its first
+  argument. **Static reading** (2026-10-20, ForgePact #166). **Measured**
+  (Mod live 7) is how its answers spread in Hell (zone levels 243 to 245
+  and the owner's own play): answers 0 to 5 counted 0, 405, 401, 410, 3449
+  and 3432 over 8146 `DropItem` calls (Live 1c, magic find x10), and 0,
+  179, 193, 169, 1530 and 1432 over 3544 calls (Live 1b). k = 0 never came
+  up. In those two sessions there was about one answer per call; in Live 1
+  the answers outnumbered the calls (867 against 497), and why is not
+  established.
+- `DropItem` draws a unique itself, apart from every named unique roll. It
+  takes `Controller_obj.lootListUnique[k]`, with k the value
+  `LoadSatanicDropTier` returned, reads its size, draws a random index, reads
+  the entry there and needs it to be an array. It looks the entry's triple up
+  with a direct `GetUniqueRepoStruct` (819) call and reads the definition's
+  fields 28 (level-like), 40 and 41 (flags) and 27 (the rarity, § 13.4). A
+  set field 40 or 41 sends it back to draw again, inside a loop whose counter
+  starts at 500, so a call can draw up to about 500 times. **Static reading**
+  (2026-10-20, ForgePact #166).
+  **Measured** (Mod live 7): this draw is the route a kill's unique takes.
+  - In Live 1's owner window (about 10 minutes) all 4 natural uniques were
+    built inside a `DropItem` call and outside every nested roll. While
+    that happened, `DropUniqueItems`, `ReturnRandomSatanic` and the builds
+    outside `DropItem` each rose by 0. The two the owner named were among
+    the four.
+  - Live 1b built 9 that way and Live 1c 105, with 2 inside the nested
+    `DropUniqueItems` roll in each session.
+  - Each natural draw build's triple sat on list k (Live 1: 4 of 4; Live
+    1b: 8 of 8; Live 1c: 103 of 103), and its tier, field 32, equalled k.
+    So list k holds the tier-k uniques.
+  - The lookups per build are mostly few. Over Live 1's and Live 1b's 12
+    natural draw builds the reads since the last build had a median of 4,
+    and over Live 1c's 103 a median of 3. The tail runs to 249.
+  - Lookups per call: in Live 1c about 8.8 a call (71988 over 8146 calls).
+    Operator kills in Live 1 made 7 a call (276 over 40 calls) and built no
+    unique.
+- The rarity then picks one of four branches: 6 (Satanic), 9 (Heroic), 7 or
+  10 (Angelic or Unholy), and any other value. In the rarity-6 branch an
+  entry whose field 32 (the tier) is 5 meets one more test, on protected
+  value slot 75. Whether each branch keeps the entry or draws again was not
+  read branch by branch. Whether the loop keeps the first entry it accepts,
+  or weighs the accepted entries by a computed value and keeps the best, was
+  not read either: a local that starts at 100,000,000 and is compared and
+  lowered inside the loop hints at a weighing. **Static reading** (2026-10-20,
+  ForgePact #166); the keep-or-weigh question is **not established**, and
+  ForgePact's Mod live procedure 7 (`draw-reads`, `draw-mode`) is written to
+  answer it. If the draw weighs entries, an entry added to list k is not
+  picked on c / (L_k + c) of draws, and its own fields (field 28 first) may
+  decide whether it is ever picked.
+  **Measured** (Mod live 7) for the keep-or-weigh question: the rule's
+  answer is `first-kept`. The natural draw builds' median of 4 reads met
+  it, and so did Live 1b's below-SS lever, at 1 pick per 3 typed draw builds
+  against the 0.13 the rule asks. The lever half rests on 3 builds, so it is
+  a weak reading.
+  **Measured** (Mod live 7, Live 1b and Live 1c) for the tier-5 test:
+  - A pushed rarity-6, tier-5 stand-in is rarely built through the draw.
+    Live 1c built 2 SS stand-ins among 105 draw builds at magic find x10,
+    both at k 0 to 4 where no natural copy sits, and Live 1b built 0 among
+    6 at x1. With s·c = 100 copies pushed on lists of about 221 entries, a
+    draw that keeps the first entry it reads would build one on about 0.3
+    of draws. Why SS stand-ins are rarely built is **not established**.
+  - The probe's `picks=` (47 in Live 1c, 13 in Live 1b) is an instrument
+    count, not the draw's picks. It counts any `CreateDefaultParams` call
+    in the draw's scope whose sub and b match a pushed triple read since
+    the read window was last cleared; it does not compare the class, and a
+    normal build does not clear the window. The debugger logpoint on the
+    draw's own `CreateDefaultParams` call hit 105 times, equal to the 105
+    draw builds and including both stand-ins, so the other 45 counted calls
+    ran at a different call site. They are not the draw picking a stand-in
+    and sending it back.
+  - Both reads of slot 75 were reached, more than once a call. Every logged
+    hit carried 75.0, a real, as the logpoint's logged value. Whether that
+    is the index argument or the value stored in slot 75 is **not
+    established**, and the comparison after the read was not logged, so
+    whether the tier-5 test rejects anything is **not established** either.
+  - In 28 minutes at x10 no natural rarity-6, tier-5 unique was built
+    through the draw.
+  - Natural tier-5 builds through the draw did come at k = 5 with rarity 7
+    (Angelic, 1) and rarity 9 (Heroic, 2), outside the `angelic=` and
+    `heroic=` roll scopes. So list 5 holds those rarities too, and the draw
+    builds them itself.
+  - **Measured** (Mod live 8): pushed rarity-6, tier-5 stand-ins are built
+    through the draw at a high push. With every Mark 1 piece class's SS
+    stand-in and Pocket Elf's pushed 400 times a call onto each of the six
+    lists, at magic find x10 and then x100, the draw built 9 of them among
+    67 unique builds (8 pieces, 1 Pocket Elf; ForgePact's rewrite then made
+    each the item). It does not say how often the tier-5 test passes at
+    one copy.
+- The build follows the draw. In the call list that `GetUniqueRepoStruct`
+  call is followed by one `CreateDefaultParams` call and one call to the
+  unnamed placement routine (§ 23.8 names `LootGroundCreate` for the ordinary
+  roll) before any other build. That is the order of the calls, not a
+  reading of the control flow between them. **Static reading** (2026-10-20,
+  ForgePact #166). **Measured** (Mod live 7): a debugger logpoint on that
+  `CreateDefaultParams` call counted one hit per unique the draw built (4
+  of 4 in Live 1, 105 of 105 in Live 1c), and none when 10 uniques were
+  placed by name through `DropUniqueItems`.
+- A second draw of the same shape reads a ds_list passed as `DropItem`'s
+  argument 7 (counting from 0), when that argument is present and passes a
+  builtin test. Which builtin was not read, and whether a kill passes a list
+  there was not read. It has its own `GetUniqueRepoStruct`,
+  `CreateDefaultParams` and placement calls. **Static reading** (2026-10-20,
+  ForgePact #166). **Measured** (Mod live 7): most kills pass a list there.
+  `DropItem` was always called with 12 arguments, and argument 7 was a list
+  on 392 of 497 calls (Live 1), 2682 of 3544 (Live 1b) and 6934 of 8146
+  (Live 1c). In Live 1's owner window this draw's `GetUniqueRepoStruct`
+  call was reached 49 times, but no unique was built through it: every
+  draw-scope build went through the Satanic draw's own `CreateDefaultParams`
+  call.
+- What else `DropItem` builds: a normal item, through `GetNormalRepoStruct`,
+  then `CreateDefaultParams`, then the placement. All three of `DropItem`'s
+  `CreateDefaultParams` calls (the Satanic draw's build, the argument-7 list
+  draw's build and this normal build) pass three arguments, and each passes
+  its class, the third, as a bool rather than a number: the Satanic draw's
+  build passes true on its unique path and false on one fallback build of a
+  fixed sub and b, the argument-7 build passes a constant true, and the
+  normal build a constant false. `CreateDefaultParams` turns that bool into
+  the real 1 or 0 it stores as `c` (§ 13.4), so a read of the stored `c` sees
+  a number while a read of the argument sees a bool; a number-only read of
+  the argument therefore never sees a unique build here. **Static reading**
+  (2026-10-21, ForgePact #166, build 498d5885…). **Measured** (Mod live 8):
+  over 13457 `CreateDefaultParams` calls in the draw's scope, the third
+  argument read as a bool or absent and never as a number. It read true on
+  the 69 unique builds and false on 8482 normal ones, and 4906 more normal
+  builds passed no third argument, or passed it unset; which call made
+  them was not read. On all 13457 the argument's truth agreed with the `c`
+  the game stored. ForgePact's first counter, which read only a number, saw
+  none of the unique builds in 8342 calls. It calls `LoadDrops`
+  (2171) once, and is that script's only direct caller (§ 13.1); drop type
+  45 inside `LoadDrops` holds the only direct call of `DropUniqueItems`
+  (1424). It calls `DropItemAngelicChance` (1368) once (§ 13.4). **Static
+  reading** (2026-10-20, ForgePact #166).
+- So a kill reaches `DropUniqueItems` directly only through drop type 45
+  (calls through the script table or a method value were not scanned), and
+  a kill's ordinary uniques can come from `DropItem`'s own draw without it.
+  Live 3's
+  four natural uniques with `DropUniqueItems` flat fit that. **Static
+  reading** (2026-10-20, ForgePact #166). **Measured** (Mod live 7, route
+  `satanic-draw`): an ordinary kill's unique comes from `DropItem`'s own draw
+  on `lootListUnique[k]`, as the draw bullet above records. **Measured**
+  (Mod live 8): kills do sometimes reach `DropUniqueItems`. In about 40
+  minutes of the owner's play in The Devil's Breach (Hell, zone level 276)
+  at magic find x10 and then x100, it ran 7 times inside a `DropItem`
+  call, over about 2900 outermost `DropItem` calls. The drops workorder's Live 3 saw
+  it never run in Act 1 on Hell. What opened type 45's gate there (the
+  zone, its level or the magic find) is **not established**.
+- Entries added to `lootListUnique[0..5]` during a `DropItem` call reach
+  this draw. **Measured** (Mod live 7, Live 1b and Live 1c, ForgePact's
+  research lever `mark1probe draws push`).
+  - The draw read pushed entries: 1943 times over 971 calls with four
+    below-SS stand-ins, 4538 over 2336 with four SS ones, and 14729 over
+    8146 in Live 1c.
+  - It picked them, and the below-SS gloves stand-in was built at k = 5,
+    where no natural copy sits.
+  - The lists' lengths were back to 50, 61, 79, 152, 221 and 380 after the
+    lever was switched off.
+  - **Measured** (Mod live 8): entries the Mark 1 drops and Pocket Elf push
+    for each outermost `DropItem` call are built from kills. Every build
+    typed on one of those stand-ins (9 of 67 typed builds, at 400 copies a
+    call) was rewritten into its item and built, and the lists read 50, 61,
+    79, 152, 221 and 380 again afterwards.
+- `ReturnRandomSatanic` (3326) draws from `lootListUnique[argument 1]` until
+  it finds an entry whose definition matches argument 0, is not hidden and,
+  unless argument 2 is set, is neither Angelic nor Unholy, and it returns
+  that definition. The byte scan found no direct call site, which is not
+  observed: it may be called through the script table or a method value.
+  **Static reading** (2026-10-20, ForgePact #166). Mod live 7 counted its
+  calls through a count-only hook by name. The count stayed 0 in all three
+  sessions, but no positive control for that hook exists, so this is **not
+  observed**, never "not called".
+- Not observed, never "none": the ghidra MCP's callers, callees and xrefs
+  were empty for every function above (the project is a `-noanalysis`
+  import), and the MCP shows neither a body nor a disassembly for `DropItem`.
+  The decompile index held no earlier record of any of these scripts for
+  this build. **Static reading** (2026-10-20, ForgePact #166).
 
 ---
 
@@ -4017,8 +4998,36 @@ content, never by the hash alone. **Measured.**
   - relic skills are named from the game's `translations*.csv`
     (`talent_name_relicMeatHook` → `Meat Hook`).
 - Every tooltip carries the key hint `ALT - Show Information`. Holding ALT draws
-  the information view, which adds each rolled line's range (` [45-75]`) and
-  skill descriptions.
+  the information view, which adds each rolled line's range (` [45-75]`).
+  It was taken to add skill descriptions too, but a gear item's skill-grant
+  description shows with and without it (§ 16.12, measured).
+  With the gameplay option `Show Item Information` on (Options ›
+  Gameplay), both ALT states draw the information view: Zealot's Book of
+  Prophecy read the same in both, its ranges (` [31-36]`, ` [7-12]`,
+  ` [10-20]`) and its grant description shown in both. **Measured
+  2026-10-22** (ForgePact's Mark 1 Stats live 1, `desc-view`). With the
+  option off: not observed.
+- **How a range is drawn** (**measured 2026-10-22**, from Mark 1 Stats live
+  1's Item Truth journal, whose tooltip records carry each drawn text with
+  its stat, colour and position): `DrawInventoryStatsNew` draws a rolled
+  line's range as a third `draw_text` after the value and the label, the
+  text ` [lo-hi]` in colour 8421504 (grey), left-aligned at the label's
+  right edge, with the whole line (value, label, range) centred on the
+  tooltip. Zealot's Book's line 203 drew `+11` at x 1816, its label at 1859
+  and ` [7-12]` at 2214. The header draws `Defense: N`, then the item's own
+  Defense (key 154) in white as ` [80]`, then a grey ` [lo-hi]`; a sockets
+  row draws `Sockets (N)` and a grey ` [lo-hi]`. A fixed line draws no
+  range (Pitfiend's Thorn, Wall of the Legion). An item placed by a mod
+  over a set item's base (ForgePact's Mark 1 pieces) drew the base piece's
+  header and sockets ranges, not its own, and no range on its own rolled
+  lines.
+- **Where a set item's or a unique's line ranges come from** was not read.
+  Generated affixes carry theirs in `itemStatStruct` keys `"10"` to `"14"`
+  as `[stat, min, max, tier]` (§ 16.3), but across every Item Truth journal
+  on the owner's machine none of 141,676 rarity-6 records carries such an
+  entry (**measured 2026-10-22**, replan 1 of ForgePact#166's playtest). So
+  writing them onto a rarity-6 item makes a state the game never makes.
+  [Mark 1 Stats live 1 results](../ForgePact/docs/mark1-set-research.md#stats-live-1-results)
 - An unidentified item draws `Unidentified` and no stat lines.
 - All 344 direct call sites of `DrawInventoryStatsNew` in the build Ghidra
   imported (§ 19.7 names its hash) lie inside `DrawInventoryItemV2`, one after
@@ -4047,6 +5056,24 @@ content, never by the hash alone. **Measured.**
   also for an item without stats, which agrees with the cache inference
   above; the branch's logic itself is still not read.
   [Mod live 2 results](../ForgePact/docs/flight-charms-research.md#mod-live-2-results)
+- The call runs on every frame the tooltip shows, while the tooltip's text,
+  the type line under the name included, is drawn on the first frame of a
+  hover only. A hook on the call armed for one item counted hundreds of
+  calls per hover and kept counting with the pointer resting on the item
+  (about 24,600 over three minutes), while the hook's swap of the type line
+  and its own rows counted 1 per hover; the swapped type line showed on
+  every frame, so the cached copy holds it. **Measured** (2026-10-21,
+  ForgePact's Mark 1 Mod live 9, `tip-rehover` and `tip-ground`). Counting
+  each call by whether the game drew in it, one call per hover drew and the
+  later ones drew nothing (49 such calls in a 1 s hover, 2,190 more over a
+  5 s rest), and a debugger logpoint on a direct `DrawInventoryStatsNew`
+  call inside the pass rose by the same 1 on each of three hovers (ground,
+  bag, worn) and stayed flat over the rest while a control logpoint logged.
+  **Measured** (2026-10-21, Mark 1 Mod live 10, `tip-ground`, `tip-cached`
+  and `dbg-stat-site`). The same site also logged once for other items'
+  tooltips between those hovers.
+  [Mod live 9 results](../ForgePact/docs/mark1-set-research.md#mod-live-9-results),
+  [Mod live 10 results](../ForgePact/docs/mark1-set-research.md#mod-live-10-results)
 
 **Measured 2026-09-24.** The stat call's arguments and return value were
 live-traced on 2026-09-04 (ForgePact's forged tooltip rows).
@@ -4253,6 +5280,523 @@ the controls and the table are in the Item Editor's
 
 [loot announcements, Live procedure 2](../ForgePact/docs/loot-announcement-research.md#live-procedure-2),
 [loot announcements, Live procedure 3](../ForgePact/docs/loot-announcement-research.md#live-procedure-3)
+
+### 16.12 A set piece's tooltip, and a skill grant's description
+
+- **Measured** (Item Truth's tooltip captures on the owner's machine,
+  `%LOCALAPPDATA%\Hero_Siege\itemtruth\journal\*.ndjson`, game build
+  `pe-6aaa6779-0cad4fc8`, recorded 2026-09-27 to 2026-10-21; each capture
+  holds one tooltip pass's `draw_text` calls with colour, x and y, and its
+  `DrawInventoryStatsNew` calls): 230 tooltips of set pieces, whose type line
+  reads `Satanic Set <type>`. `UI_Inventory_Tooltip_obj` drew those of items
+  in the bag or worn, `UI_Pickup_Tooltip_obj` those of items on the ground.
+  The set's part of the tooltip comes after the item's own stats and
+  sockets, in this order:
+  - a gap of two rows, then the set's bonus lines. They are stat lines like
+    any other, through `DrawInventoryStatsNew` with format 5 (a percent) or
+    6 (a flat number) and style 8 or 9 (§ 16.6). A line drawn active is
+    7844807 (RGB 199,180,119, a pale gold), one drawn inactive 4210752
+    (RGB 64,64,64, a dark grey);
+  - a gap of two rows, then the set's name, centred, in 7844807;
+  - one centred row per piece of the set, in the set's own order and the
+    hovered piece among them: 65280 (green) when the player wears that
+    piece, 4210752 when not. No count of worn pieces is drawn;
+  - a gap of two rows, then the footer.
+- **Measured**, how the colours split over those 230: in the 191 with no
+  piece name green, every bonus line was 4210752. Of the 39 with at least one
+  piece green, 19 drew one or more bonus lines in 7844807.
+- **Measured**, the row pitch: every stat call in these captures reported a
+  row height of 28 at the capture's scale, where § 16.6 measured 30 and
+  ForgePact's forged rows draw at 30.
+- **Measured**, a skill grant's line and the description under it (same
+  captures): the Heroic Shield `Celestial's Authority` draws `+1` and `to
+  Celestial Might` as stat 203's line (`DrawInventoryStatsNew`, format 3,
+  style 8) in 18687 (RGB 255,72,0, an orange). Under it comes the talent's
+  description, the `talent_desc_celestialMight` text, in 8421504
+  (RGB 128,128,128, a grey), wrapped over two centred rows, and then a
+  parameter row: its name (`Conversion `) in 7844807 and its value (`80%`) in
+  white. All 200 captured tooltips with a stat-203 line drew the description
+  under it. The item editor's own static analysis sends that description
+  through `DrawSkillDescription`
+  (`hero-siege-item-editor/hs_stat_semantics_s10.json`, its grant block).
+- **Measured**, a gear item's grant description outside the ALT view
+  (2026-10-21, ForgePact's Mark 1 Mod live 9, `desc-plain`): a worn Zealot's
+  Book of Prophecy, line `+11 to Satan's Mark (White Mage)`, drew the skill's
+  description under the line without ALT and with ALT held, the tooltip the
+  same in both. Both of its screenshots show the rolled ranges, which § 16.6
+  puts in the information view, so whether the plain view was among them is
+  **not established** (§ 16.13).
+  [Mod live 9 results](../ForgePact/docs/mark1-set-research.md#mod-live-9-results)
+- **Measured**, the width an item's description or lore row wraps at
+  (Item Truth's captures, 182 journals of the same build): the game draws
+  those rows with `draw_text_ext` at a line separation of -1, and the width
+  it passes is not one constant but follows the tooltip's box. 1,176
+  captured tooltips carry such a row, at widths from 478 to 1160; 504 is
+  the commonest (382 bag or worn tooltips and 437 ground ones), and 622
+  belongs to a few wide boxes (Elixir of Death, Ghostly Potion, Celestial's
+  Authority). Which instance variable holds a box's width was not read
+  (§ 16.6 names `inventorySurfaceWidth` beside the cache branch, unread).
+- **Static reading** (2026-10-21, the hub's ghidra MCP, in our own words):
+  - `GetSetName` (`gml_Script_GetSetName`, a method that `GetSetNames`
+    defines) turns a set index from 1 to 70 into that set's localized name,
+    one of the `*_setname` keys of `translationsItem.csv`; any other index
+    gets a fallback string.
+  - `DefineSetPieceRequirements` fills `global.requiredPieces` at indices 1
+    to 70 with 2, 3 or 4, one value per set. What reads the array was not
+    read.
+  - `gml_Script_s_SetItemInfo` builds the reference to one set piece out of
+    three fields, `itemType`, `weaponType` and `itemId` (slot names taken
+    from `tools/decomp_index.py slot-name`). So the game names a set's
+    pieces as unique-repository triples, and an item built as a base item
+    (as ForgePact's Mark 1 pieces are) is no such triple.
+  - `GetSetInformation` sorts a set name into one of 70 cases.
+  - `DrawInventoryItemV2Func` makes `DrawInventoryItemV2` (§ 16.6's tooltip
+    pass) a method value, and the MCP's decompiler gives up on that method's
+    body at its flow limit, so the pass itself was not read.
+- **Not established:**
+  - the rule that draws a bonus line active: per line, and at which count of
+    worn pieces;
+  - how the pass decides that an item belongs to a set (how an item names
+    its set), and how it counts the worn pieces;
+  - the 28 against 30 px row pitch: which one a live tooltip uses at the
+    player's scale.
+
+ForgePact's Mark 1 set draws its own set block in the pieces' tooltips from
+these measurements. The pieces' description wraps at 478, the narrowest
+width the game itself used in any captured tooltip, after Mod live 9 found a
+row wrapped at 622 running past both edges of a piece's box. At 478 the
+description took four rows, and every row of the block sat inside the box,
+no letter cut and none over another row or the footer, in a ground, a bag
+and a worn piece's tooltip, with the bonus line grey and gold. **Measured**
+(2026-10-21, Mod live 10, `tip-layout`):
+[Mark 1 research, Phase 5](../ForgePact/docs/mark1-set-research.md#phase-5-the-set-tooltip-and-the-pieces-art),
+[Mod live 10 results](../ForgePact/docs/mark1-set-research.md#mod-live-10-results).
+
+### 16.13 Set bonuses, item stat keys and the item description font
+
+Written for ForgePact#166's second playtest (2026-10-22), when the Mark 1
+pieces got rolled stats and the set a bonus at 2, 3 and 4 pieces. In our own
+words; nothing here quotes the game's code.
+
+- **Static reading** (2026-10-22; the owner's headless decompile of the set
+  scripts, the hub's ghidra MCP, and one headless `FindCallers.java` byte
+  scan whose positive control, `CheckTalentUse` called from
+  `PlayerMovement`, was found):
+  - **`GetSetInformation`** takes a set's name and a line number from 1 to 5
+    and returns one bonus line per call: the set's class id (-1 for none),
+    the value, the id the stat dispatcher `ReturnSpecificStat` takes, a draw
+    style (8 or 9) and a format (5 a percent, 6 a flat number). A line the
+    set does not use returns nothing, and no line carries a count of pieces.
+    The owner's positive controls: Pit Fighter's and Zealot's five lines
+    decode to exactly what Item Truth's tooltips of those sets show, and
+    Zealot's line 1 is dispatcher id 64, movement speed, at 25%.
+  - `DefineSetPieceRequirements`' one value per set (§ 16.12) equals the
+    set's piece count for 59 of the 70 sets: plausibly the pieces for the
+    full set, an inference. Line counts do not follow piece counts (Sheep
+    King has five lines and three pieces), so "one line per extra piece" is
+    ruled out for those sets.
+  - **Who reads set lines** (byte scan, direct calls only):
+    `GetSetInformation` is called from `LoadSpecificStat` (one site) and
+    from two unnamed functions (five sites each; one of them also calls
+    `DrawSkillDescription` 23 times, so it is plausibly the tooltip pass's
+    body). `LoadSpecificStat` is called from `RunItemEquipped` (two),
+    `GuildPerkActivate` (eight), `JewelcraftingAdd`, `MiningAdd`,
+    `PickupRelic` and one unnamed function, and from no `Stat*` getter. So
+    the game's stat aggregation reads set lines, on equip-time paths.
+  - **The dispatcher ids a set bonus can answer, and their getters**
+    (`ReturnSpecificStat`'s case map, the 2026-10-04 reading, § 7.5): 2
+    `StatAllSkills`, 21 `StatArmor`, 22 `StatVitality`, 36 `StatMaxLife`, 38
+    `StatLifeReplenish`, 45 `StatLifePerKill`, 64 `StatMovementSpeed`, 92
+    `StatDefense`, 97 `StatPhysicalDamageReduction`, 161
+    `StatAllResistances`, 162 `StatFireResist`, 163 `StatColdResist`, 164
+    `StatPoisonResist`, 165 `StatLightningResist`, 167 `StatArcaneResist`.
+    These are the dispatcher's ids: not item stat keys (the table below),
+    and not `hs-game-sdk`'s `StatId`, whose numbering is neither (hub #546).
+  - Each of `StatMaxLife`, `StatDefense`, `StatArmor`, `StatAllResistances`,
+    `StatFireResist`, `StatLifeReplenish`, `StatPhysicalDamageReduction`,
+    `StatAllSkills` and `StatLifePerKill` has exactly one direct caller,
+    `ReturnSpecificStat`. So every direct-call consumer of those stats goes
+    through the dispatcher, and an answer changed there reaches them. A call
+    through the script table or a method value is invisible to the scan:
+    such consumers are **not observed**, not excluded.
+  - **`DrawSkillDescription`**, the script that draws a skill grant's
+    description: it reads three font globals, `font_item_stats`,
+    `font_item_stats_small` and `font_item_stats_smaller`, and `hud_res`. It
+    sets the colour to grey 128,128,128 (8421504) at alpha 1 and the font to
+    `font_item_stats_small`, or to `font_item_stats_smaller` when an
+    optional argument asks for it, and hands the text to a rich-text object
+    (`inventorySurfaceRichText`, through its `SetText`, `SetRichTextFont`,
+    `CalculateRowWidths` and `Draw` methods). That the builtin it gives the
+    font to is `draw_set_font` is inferred from the argument. Its body reads
+    no key, input, view, compare or option value: any view rule would sit in
+    its caller.
+  - `DrawSkillDescription`'s only direct caller found is
+    `DrawInventoryItemV2`, the tooltip pass (§ 16.6), at 23 sites. So the
+    game draws a grant description only inside an item's tooltip pass.
+    Whether that pass skips those calls outside the information view was
+    not read: the pass's body is about 1.6 MB of code, past what the
+    decompiler finishes.
+  - **The `alwaysShowInfo` option.** The game keeps a gameplay option of
+    that name. A scan of its slot's references found it used only by the
+    startup name table, the gameplay options screen's Create event and the
+    game's global function table, and not directly in `DrawInventoryItemV2`
+    (**not observed**: how its value reaches the pass was not read). If it
+    is on, a tooltip shown without ALT is the information view too.
+  - **`SetCooldown`** keeps the active cooldowns in two lists in the game's
+    protected data, `cooldownList` and `cooldownProcList`, one branch each
+    (§ 7.9). Reading by name whether a talent is on cooldown is not
+    established.
+  - `GetSetInformation`'s cross-references through the MCP: one data
+    reference. **Not observed**, not a negative: the import was made with
+    `-noanalysis` (AGENTS.md, the Ghidra section).
+- **Measured** (Item Truth's captures, 184 journals on the owner's machine,
+  build `pe-6aaa6779-0cad4fc8`, 2026-09-27 to 2026-10-21; what a capture
+  holds is in § 16.12):
+  - **The item stat keys**, against `hero-siege-item-editor`'s
+    `hs_stat_semantics_s10.json` (schema 1, generated 2026-09-02) and the
+    labels the game drew:
+
+    | key | name | drawn as (label, format, style) |
+    |---|---|---|
+    | 154 | Defense | the header `Defense: N`, no stat call |
+    | 29 | Enhanced Defense | `Enhanced Defense`, 2, 8 |
+    | 48 | to Vitality | `to Vitality`, 3, 8 |
+    | 173 | to All Resistances | `to All Resistances`, 2, 8 |
+    | 201 | to All Skills | `to All Skills`, 3, 8 (the class from key 21) |
+    | 170 | Faster Hit Recovery | `Faster Hit Recovery`, 2, 8 |
+    | 52 | to Life | `to Life`, 3, 8 |
+    | 59 | Life After each Kill | `Life After each Kill`, 3, 8 |
+    | 51 | to All Attributes | `to All Attributes`, 3, 8 |
+    | 55 | Replenish Life | `Replenish Life`, 2, 9 |
+    | 159 | Physical Damage Taken Reduced by | `Physical Damage Taken Reduced by`, 2, 9 |
+    | 20 | Sockets | the `Sockets (N)` text row after the stat lines |
+    | 25 | Increased Movement Speed | `Increased Movement Speed`, 2, 8 |
+    | 294 | Skill Movement Diminish decreased by | `Skill Movement Diminish decreased by`, 2, 9 |
+
+  - **Key 294**, translation key `stat_movement_diminish`: 72 captured
+    tooltips drew it under that label, on items carrying 10 to 100. By its
+    label it reduces the cast's movement slowdown (§ 7.8); it is not a
+    movement-speed stat, and it does not express "-50% Movement Speed".
+  - **A set line as the game draws it**: `DrawInventoryStatsNew` with the
+    value as its argument 3 and the label as its argument 4, format 5 or 6,
+    style 8 (value first, signed) or 9 (label first), row height 30.
+    Captured: `Defense` 6/8 at 350, 475 and 500; `to All Resistances` 5/8;
+    `Replenish Life` 5/9 at 25; `to All Skills` 6/8; `to Life` 6/8 at 235 to
+    1250; `Physical Damage Taken Reduced by` 5/9 at 15, 20 and 30; `Movement
+    Speed` 5/8 at 25 (Zealot's line 1). A negative value is drawn signed
+    (`-125% to All Resistances`). The words a row reads: `+500 Defense`,
+    `+35% to All Resistances`, `Replenish Life 25%`, `+5 to All Skills`,
+    `+750 to Life`, `Physical Damage Taken Reduced by 20%`, `-50% Movement
+    Speed`.
+  - **The order of an item's stat lines in a pass** (a pass calls every
+    stat line it knows in one fixed order, § 16.6): of the keys above, 29
+    comes first, then 201, 48, 51, 52, 170, 59 and 173. At least 50 other
+    drawn ids came after 173, so a format 2 or 3 call always follows the
+    last of an item's own lines.
+  - **After the sockets row**, in 614 passes of socketed items, only a set
+    item's bonus calls (format 5 or 6) ever followed; a non-set item makes
+    no stat call after its `Sockets (N)` row.
+  - **The description font is smaller.** A skill grant's description
+    (Celestial's Authority, 2026-09-28) was drawn glyph by glyph in 8421504,
+    its rows 26 px apart at about 10 px a glyph, where the same pass's stat
+    rows were 28 px apart at about 13.6 px a glyph.
+  - **The natural seed bound**: 485,148 item records carry a definition `a`
+    from 0 to 999,981,452, none at or above 1,000,000,000. 684 sit in
+    777000 to 799999, ForgePact's own built-ins among them, and ForgePact's
+    `angelicdrop` placements draw their seeds from 100,000,000 to
+    999,999,999, also below that bound.
+- **Static reading** (replan 1, 2026-10-22, the hub's ghidra MCP):
+  `StatFireResist` itself calls `ReturnSpecificStat` at ten sites; which
+  ids it asks for was not read.
+- **Measured 2026-10-22** (ForgePact's Mark 1 Stats live 1, slot 14
+  "Sorak", White Mage, in town; Mark 1's `ReturnSpecificStat` consumer
+  records each id's last local call as original and answer, and debugger
+  logpoints at the getters' own addresses counted their calls beside a
+  positive control on `PlayerMovement`):
+  - **An answer changed at the dispatcher reaches what the player sees.**
+    Answering id 36 with its original plus 750 moved the HUD's maximum life
+    between 4901 and 5651 as the answer was switched; id 2 read 28 to 33
+    and id 161 266 to 301 under the same answers, and with the answers off
+    every id read its original again. Taking a piece off, the HUD maximum
+    had not moved 0.4 s later and had moved about 7 s later, after the
+    game's next `StatMaxLife` read. This measures the dispatcher route the
+    byte scan above found; the claim that every consumer goes through it
+    stays scoped to the consumers seen.
+  - **The getters are read periodically, not every frame.** `StatMaxLife`
+    about once a second idle (10 in 10.26 s) and `StatAllResistances` about
+    twice a second (20), both faster around an equip change (16 and 48 in
+    the 15 s after wearing a piece). `StatFireResist` logged no call over
+    about seven minutes in town while the control logged more than 25,000:
+    **not observed**, plausibly asked only on events the town did not
+    produce (a hit taken, the character sheet; not established).
+  - **Ids not asked in town**: 92 (Defense), 97 (Physical Damage Taken
+    Reduced), 162 to 165 (fire, cold, poison, lightning) and 21 had no
+    local dispatcher call in the whole session, the set equipped and
+    unequipped and the automation casting. Not observed, not "never asked".
+  - **Id 38** (life replenish) was asked when the automation cast Healing
+    Zone (its original 159 then 242, against 46 before), and not after a
+    piece was worn with no skill cast.
+  - **Id 167 (arcane resistance) follows id 161.** Its original read 339
+    with Mark 1's 161 answer off and 374 with it on, 35 more, the size of
+    that answer. So `StatArcaneResist` plausibly takes the all-resistance
+    answer through the dispatcher (an inference from one id; 162 to 165
+    were not asked).
+  - **The description font is smaller in our tooltips too.** A description
+    drawn through the game's `font_item_stats_small` had capitals about
+    17 px high against the bonus lines' 22 px at 2560 × 1440, the same
+    letter height and line pitch as Zealot's Book of Prophecy's grant
+    description in the same session.
+  [Mark 1 Stats live 1 results](../ForgePact/docs/mark1-set-research.md#stats-live-1-results)
+- **Measured 2026-10-22, Stats live 2** (ForgePact's Mark 1, slot 14
+  "Sorak", White Mage, in town and in Outskirts of Inoya; the same consumer
+  records, `statask` asking the dispatcher itself with the local player as
+  self, and debugger logpoints at `StatDefense` and
+  `StatPhysicalDamageReduction` logging each call's self beside a
+  `PlayerMovement` control):
+  - **Id 162 (fire) did not move with Mark 1's 161 answer.** With the
+    answer on (161 266 to 301), id 162 read 83 with the answer off and 83
+    with it on (`statask`, the dispatcher asked with the local self); 164
+    also read 83 (83 -> 83, in Outskirts, from a call made around the
+    switch's change). Whether `StatFireResist` adds 161 is **not
+    established**: 83 on two elements against 161 = 266 fits a cap clamping
+    the value, which no read separated (no read below a cap, no negative 161
+    answer). 163 and 165 were not asked. Id 167 (arcane), which read 339 and
+    so is not at 83, followed 161 by +35 in Stats live 1 (above).
+  - **Who asks for 92 and 97.** While the debugger was attached (the sheet
+    windows in town and the Outskirts window), only our own `statask` asked 92 or 97 with the local player as self. Each opening of
+    the talent screen (T) made two fresh instances ask, 92 twice and 97
+    three times, and in Outskirts one instance asked 92 about every 344
+    control hits and 97 in pairs; neither was the player. Measured; who those
+    selves are is the static reading below, and whether an enemy's hit asks
+    with the player as self is not observed (the session separated no hit
+    from Soul Spurn's own life drain).
+  - **The game asks for the maximum life with the local self** inside both
+    windows, the sheet's and Outskirts': id 36's record read 4901 -> 5651
+    with Mark 1's answer on (in town it is asked about once a second, Stats
+    live 1). The talent screen itself
+    showed Life 4901 while the HUD read 5651: the sheet's number does not
+    come from a call with the player as self.
+  - **Id 37's answer reaches the HUD's maximum mana**: answered 940.8, the
+    HUD read `941 / 940.80`.
+  - **Id 42's answer reaches the regen.** Forced to 0, mana held at 1428 for
+    5 s after a spend (a 10 s key spend took 924 in the same window, the
+    control). At its own value R = 257, mana rose 676 in 2.98 s (0.883 a
+    second per unit, read from HUD crops); answered 128.581, about half, it
+    rose 338 in 2.97 s, half as much.
+  - **A skill fired through `TalentUseClass` from outside the input gate**
+    charges no mana (0 spent over 10 s, against 1219 by the same skills'
+    key presses) and skips the game's own pre-cast refusals: Mana Orb, whose
+    key press the game refused in Stats live 1 for a reason beyond its
+    cooldown (plausibly while its orb lives; not established), reached 7
+    instances at once.
+  - **Faster Cast Rate's id 106 moves on its own**: it read 55, 85 and 106 in
+    one session with no change of gear, so a before-and-after read seconds
+    apart does not isolate a change (`statadd castrate 100` read 55 -> 158).
+  [Mark 1 Stats live 2 results](../ForgePact/docs/mark1-set-research.md#stats-live-2-results)
+- **Static reading after Stats live 2** (2026-10-22, ForgePact's Mark 1
+  replan 4: who else asks the dispatcher for Defense, id 92, and Physical
+  Damage Taken Reduced, id 97). Sources: the hub's ghidra MCP (it decompiled
+  `GetMyPlayer`; `StatDefense` and `StatPhysicalDamageReduction` timed out),
+  and local byte scans of an import copy of `Hero_Siege.exe` (build
+  `498d588550d8`) for direct `call rel32` sites into the dispatcher with a
+  constant id, and for each script's direct callers. The scans and their
+  outputs are local research material on the owner's machine, outside any
+  repository (`%USERPROFILE%\tools\hs-decomp\issue166\` and
+  `%USERPROFILE%\tools\hs-decomp\mark1-playtest2-replan2\`), and hold names
+  and counts only. **Positive controls**, same scans: the constant-id scan
+  listed id 64's askers exactly as § 7.8 lists them (the player's Step,
+  `StatTotalDamage`, `StatAttackDamage`, `StatMagicSkillDamage`,
+  `TalentsSamurai`, `Mercenary_obj`'s Alarm 5), and the caller scan found
+  `CheckTalentUse` called from `PlayerMovement`. A call through the script
+  table, a global or a method value, or with a computed id, is invisible to
+  them: an asker they did not find is **not observed**, not absent.
+  - **Who asks for 92 and 97 with a constant id** (static reading): 92 is
+    asked by `StatMaxLife` (one site), by `StatDefense` itself, and by the
+    collision events of `Player_obj` and of `Mercenary_obj` with
+    `Enemy_Damage_Parent_Projectile_obj`. 97 is asked by `sc_hurt` (one
+    site) and by `Mercenary_obj`'s collision events with
+    `Enemy_Damage_Parent_obj` and with `Enemy_Damage_Parent_Projectile_obj`
+    (two sites each).
+  - **A hit on the player asks with the player as self** (static reading,
+    then inference): `sc_hurt` is called directly from `Player_obj`'s two
+    collision events with enemy damage and from `CA_playerHurt`, and
+    `PlayerTakeDamage` from the same two events. A collision event runs on
+    the instance it belongs to, and a called script keeps its caller's self
+    (GameMaker's rule, not read in this build), so the player's own Defense
+    and PDR are asked with the player as self when an enemy strikes it.
+    **Measured in part** (Stats live 3, below): four hits on the player each
+    ran `sc_hurt` with the player as self and then asked 97 with the player
+    as self; no 92 ask with the player as self came with them (not
+    observed; whether those hits were projectiles was not read).
+  - **The mercenary asks for itself** (static reading): `Mercenary_obj`'s
+    Alarm 5 asks 36, 37, 64, 2, 8 and more at 18 sites, and its melee
+    collision asks 97 at two. That fits what Stats live 2 measured outside
+    town, a non-player self asking 92 about once every 344 control hits (a
+    periodic alarm) and 97 in pairs, while the character played (slot 14,
+    Sorak) has a mercenary (§ 7.6). That this self is a `Mercenary_obj` is
+    **measured** (Stats live 3, below).
+  - **The talent screen asks with its own objects as self** (static reading
+    and measured): the T screen is the character sheet (Player tab: Base
+    Stats, Offensive, Defensive, Summoned, Statistics; it scrolls).
+    `UI_Button_Talent_Player_obj`'s Alarm 0 calls the dispatcher at 15 sites
+    with no constant id and its Draw GUI at 27 with constant damage ids;
+    `UI_Talent_Screen_Attribute_obj`'s and `UI_Talent_Screen_Allocate_obj`'s
+    Alarm 0 at about 30 each (127, 68, 69, 155, 32 and 33 as constants, the
+    rest computed); `Player_Talent_Tooltip_obj`'s Create method at 34. No
+    `UI_Mercenary_*` object calls the dispatcher directly (not observed).
+    Stats live 2 measured two fresh instances asking 92 twice and 97 three
+    times on each opening of the sheet, and the sheet showed Life 4901 while
+    the HUD read 5651 with Mark 1's id-36 answer on: the sheet asks for the
+    player's stats with a self that is not the player. Which object asks
+    for Base Stats' Life is **measured** (Stats live 3, below):
+    `UI_Talent_Screen_Attribute_obj`, for 36, 92 and 97 alike.
+  - `Load_Player_Stats_obj`'s Step calls the dispatcher at 226 sites, all
+    with constant damage ids (2, 3 to 10, 79, 194, 355, 361, 561 to 565),
+    none of them 36, 92 or 97 (static reading).
+  - **Argument 0, the stat's unit** (static reading): the dispatcher hands
+    its first argument to `GetMyPlayer` (seen in id 102's case), and
+    `GetMyPlayer` given an undefined argument takes a global value and walks
+    the `Player_obj` instances for the one whose player number matches.
+    `StatDefense`, `StatPhysicalDamageReduction` and `StatMaxLife` read
+    `playerBuff` (63, 181 and 85 references) and test `instance_exists` (9,
+    28 and 13). So the unit a stat is computed for may be argument 0 rather
+    than self; **not established**. Measured in Stats live 3 (below):
+    argument 0 read 1 on every non-player asker recorded, the player's sheet, the
+    mercenary and summons alike, so it does not tell them apart.
+  - **The HUD's numbers** (static reading): `DrawHud` draws text through
+    `draw_text` (32 references) after reading values through the protected
+    store (`gDataProtected`'s `GetVariable`, 45 references) and `pSt` (8).
+    That its life and mana `current / max` texts are among them is
+    **measured** (Stats live 3, below: the text it draws agreed with the
+    dispatcher's 36 and 37).
+  [Static reading after Stats live 2](../ForgePact/docs/mark1-set-research.md#static-reading-after-stats-live-2)
+- **Measured 2026-10-23, Stats live 3** (ForgePact's Mark 1, slot 14
+  "Sorak", White Mage, in town and in Outskirts of Inoya, Mana Orb and Soul
+  Spurn off the bar; debugger logpoints at `StatDefense`,
+  `StatPhysicalDamageReduction` and `sc_hurt` logging each call's self
+  beside a `PlayerMovement` control; Mark 1's recorder naming each
+  non-player asker's object and argument 0; life and mana read in process
+  from the text `DrawHud` draws):
+  - **When an enemy strikes the player**, `sc_hurt` runs with the player
+    as self and the player's 97 is asked with the player as self, once per
+    hit (four hits). The player's 92 was not asked with the player as self
+    on those hits (not observed). Life read full before and after, so
+    whether those calls dealt damage was not read.
+  - **The other self outside town is the mercenary.** `Mercenary_obj`
+    asked 92 and 97 (69 and 14 times, against the logpoints' 67 and 14 for
+    that self); summons' and pets' passives (`Legion_Skeleton_Passive_obj`,
+    `Legion_Skeleton_Archer_Passive_obj`, `Spider_Passive_obj`,
+    `Zombie_Passive_obj`) asked 36 with the player's values; `Companion_obj`
+    and `Mercenary_obj` asked 64. Argument 0 read 1 on every non-player
+    asker recorded (the player's own calls' argument 0 was not recorded).
+  - **The character sheet's askers.** On its Player tab
+    `UI_Talent_Screen_Attribute_obj` asks 2, 21, 36, 37, 38, 42, 64, 92, 97,
+    103, 106, 161 to 165 and 167, and `UI_Button_Talent_Player_obj` asks 2;
+    the sheet's Base Stats Life and its Defensive tab's Defense and Physical
+    damage reduction equal what the dispatcher answers those asks.
+    `UI_Talent_Screen_Allocate_obj` and `Player_Talent_Tooltip_obj` were not
+    seen asking. The sheet's own Mercenary tab asks for the mercenary's
+    stats through the same `UI_Talent_Screen_Attribute_obj` (and id 2
+    through `UI_Button_Talent_Player_obj` and `Load_Mana_Costs_obj`), so an
+    answer keyed on that object reaches the mercenary's page too.
+  - **The HUD's life and mana text** matches the dispatcher's 36 and 37
+    maxima, and follows a spend (mana 3341 to 1937 over a 10 s key hold).
+  - **The replenish unit**: with id 42 at its own 140, mana rose 122.417 a
+    second, 0.874 a second per unit (read in process; Stats live 2's HUD
+    crops read 0.883). With 42 answered 92.96 it rose 87.37 a second, within
+    8% of that unit's prediction. Read on the drain side, the two windows'
+    difference (S7 minus S8) is 0.745 a second per drained unit, the value
+    ForgePact's `kMark1ReplenishUnit` adopts; the readings disagree, and
+    § 7.10 infers that the regen tick's rounding up explains it.
+  - **A replenish below zero drains.** With 42 forced to −140 from 1428 of
+    2352, mana fell 518 in 4.2 s, −124.131 a second: the game's regen
+    applies a negative replenish, it does not stop at zero.
+  - **Faster Cast Rate's 106** read 54, 158 and 54 in one command file
+    around `statadd castrate 100` and back to 0: +104, not +100.
+  [Mark 1 Stats live 3 results](../ForgePact/docs/mark1-set-research.md#stats-live-3-results)
+- **Measured 2026-10-23, Stats live 4** (ForgePact's Mark 1, the same
+  character and instruments, Y left empty, all four pieces worn and the set's
+  switch on, in Outskirts of Inoya with the mercenary still hired; it was
+  not sent away: the agent session's permission classifier refused the
+  click on "Discharge Mercenary", not the game):
+  - **When an enemy strikes the player** (four hits), `sc_hurt` runs with
+    the player as self and each hit is followed by an ask for the player's
+    97 with the player as self, as in Stats live 3; this time with
+    `bonusread` reading 97 21->41 in the same window.
+  - **The player's 92 was asked with the player as self** once in the
+    struck window (`bonusread` read 92 7056->7556 there), not next to any
+    of the four hits (window-relative line 3035 against 6633 to 6749).
+    Which code asked was not read: the static reading above lists
+    `StatMaxLife` (one site) and the player's collision with an enemy
+    projectile as constant-id askers, and cannot see a computed-id one;
+    whether any hit was a projectile was not read.
+  - The logpoints read each call's self, not the answer it got; life read
+    full throughout, so whether the set's numbers changed the damage the
+    hits dealt was not read.
+  - **Another self asked 92 and 97 again**, the same self as
+    `Mercenary_obj`'s 92 and 97 asks by count: from the recorder's reset
+    on arrival in Outskirts, 31 `df` and 8 `pd` lines with that self
+    against `Mercenary_obj`'s 31 asks of 92 and 8 of 97, all left as the
+    game answered them.
+  [Mark 1 Stats live 4 results](../ForgePact/docs/mark1-set-research.md#stats-live-4-results)
+- **The talent screen's page** (ForgePact's Mark 1, Amendment 8,
+  2026-10-23):
+  - **Measured** (Stats live 3, `merc-page`): on the talent screen's
+    Mercenary tab the rows ask the dispatcher with the same objects as on
+    the Player tab (`UI_Talent_Screen_Attribute_obj`,
+    `UI_Button_Talent_Player_obj`), argument 0 read 1 on both pages, and
+    the originals were the mercenary's own (36 12527, 37 742, 92 5114, 97
+    86, the numbers `Mercenary_obj`'s own asks read; 42 read 31, not the
+    player's 140, and no `Mercenary_obj` 42 ask was recorded). So neither the asker's
+    object nor argument 0 tells the sheet's two pages apart.
+    [Mark 1 Stats live 3 results](../ForgePact/docs/mark1-set-research.md#stats-live-3-results)
+  - **Static reading** (the hub's ghidra MCP decompiled
+    `UiATalentsPlayer`, `UiATalentsMercenary` and `close_talents`; in our
+    own words): the screen's top tabs are UI actions, and each page is its
+    own screen object. The Player tab's action does nothing when a
+    `UI_Talent_Screen_obj` already exists; otherwise it closes the talent
+    screens and creates a `UI_Talent_Screen_obj`, passing on the old
+    screen's local and online player. The Mercenary tab's action does the
+    same with `UI_Mercenary_Talents_obj` and then sets up the mercenary's
+    talent buttons on it. `close_talents` destroys every instance of
+    `UI_Talent_Screen_obj`, `UI_Incarnation_Board_obj` and
+    `UI_Mercenary_Talents_obj`. So the page on show is whichever screen
+    object has an instance: the player's page is an instance of
+    `UI_Talent_Screen_obj` and none of `UI_Mercenary_Talents_obj`. That T
+    opens the screen as a `UI_Talent_Screen_obj` is inferred from Stats
+    live 3 (T opened on the Player tab), not read. The Hero and Ether tabs
+    (`UiATalentsIncarnation`, `UiATalentsEther`) were not read.
+    `UiAMercenaryDischarge` (sending the mercenary away) has one data
+    reference through the MCP: where its button sits is **not observed**.
+  - Mark 1 answers a talent-screen asker only when, read at that call,
+    `UI_Talent_Screen_obj` counts at least one instance and
+    `UI_Mercenary_Talents_obj` none. That this keeps the Mercenary tab at
+    the game's values is **measured** (Stats live 4, `merc-page`,
+    `page-back`): on the Mercenary tab every talent-screen ask read answer =
+    original on the mercenary's numbers (36 12527, 92 5114, 97 86, 42 31),
+    and back on the Player tab 36 read 4901->5651 again. Live 4 measured
+    that effect, not the mechanism: that the page on show is whichever
+    screen object has an instance stays the static reading above.
+  [Mark 1 static reading after Stats live 3](../ForgePact/docs/mark1-set-research.md#static-reading-after-stats-live-3),
+  [Mark 1 Stats live 4 results](../ForgePact/docs/mark1-set-research.md#stats-live-4-results)
+- **Not established:**
+  - which line the game lights at 3 and at 4 pieces for its own sets (the
+    one measured case: with 2 pieces counted, Zealot's Prophecy's first line
+    is lit, 37 captures);
+  - whether ids 162 to 165 take the all-resistance answer (id 161) (162
+    and 164 sat at 83 with it on and off, possibly a cap), and what 167
+    does differently (Stats live 1 and 2, above);
+  - whether key 294 feeds the dispatcher's id 199, the cast slowdown the
+    gate asks for (§ 7.7, § 7.8);
+  - whether the game hides a grant description outside the information
+    view, and so whether § 16.12's `desc-plain` saw a plain view at all
+    (Stats live 1 found `Show Item Information` on, which makes both ALT
+    states the information view, § 16.6).
+
+ForgePact's Mark 1 set writes its pieces' stats under the item keys above
+and gives its set bonus as dispatcher answers of the ids above:
+[Mark 1 research, the 2026-10-22 playtest](../ForgePact/docs/mark1-set-research.md#the-2026-10-22-playtest-stats-cast-priority-and-held-input),
+[Playtest static reading](../ForgePact/docs/mark1-set-research.md#playtest-static-reading).
 
 ---
 
@@ -5113,6 +6657,30 @@ workorder `forgepact-issue-95`, 2026-09-28, and part 2b, the mod's workorder
   `LootFilterAffixTierVisible` and `LootFilterAffixTierHighlight`), and a small
   dispatcher that calls `LootGroundRelicStep` or `LootGroundDeActiveStep`.
   **Static reading** (part 2).
+- Which test reads an item's own tier (`itemInfoStruct["32"]`, §16.3) is
+  **not read**. `LootFilterAffixTierVisible` walks the affix slots "10".."14"
+  and reads each slot's own affix tier, not the item's tier. The
+  `m_LootFilter` closure itself (the middle of Create's three by role) did
+  not decompile within 220 s. Its dispatcher sibling was read and only
+  dispatches. What was read around it: the menu's per-type tier action
+  (`UiALootFilterTypeTier`) walks five positions, 0 to 4, and sets or clears
+  one bit per position in a per-type number, and `LootFilterBit(n, k)` answers
+  bit k of n. So the filter keeps a five-position tier mask per item type,
+  which fits the five tiers C to SS; that a position is the item's tier less
+  one is an inference, not read. **Static reading** (2026-10-20, ForgePact
+  #166, workorder `forgepact-166-mark1-set-drops`, item `tier`). Mark 1's
+  pieces are written SS (5) by their dressing for this reason.
+- An item written rarity 6, tier 5 shows past a filter that shows SS items:
+  in ForgePact's Mod live 6 (2026-10-20, `filter-shown`, pass) a Mark 1 Boots
+  placed at rarity 6, tier 5 showed its ground label `Mark 1 Boots | SS`
+  under the owner's own filter, with no `lootshow`, and Mod live 5 read
+  `Tier SS` in its tooltip (`tier-ss`). Its control, a vanilla tier-5 item
+  with no affix lines (`filter-control`), was not observed in either
+  session, because no by-name call placed one; a pass needs no control.
+  That the tier mask's position is the item's tier less one stays an
+  inference. **Measured**
+  ([Mod live 6 results](../ForgePact/docs/mark1-set-research.md#mod-live-6-results),
+  [Mod live 5 results](../ForgePact/docs/mark1-set-research.md#mod-live-5-results)).
 - The filter verdict is computed in `LootGroundInit`, not in Create:
   `LootGroundCreateFromItem(x, y, item)` calls `CreateLootInFreePos`, then
   `LootGroundInit(instance, item)`, which reads the bound `m_LootFilter` off the
@@ -5418,7 +6986,8 @@ are not, and are written "Live 1 run Jn" here.
   too and put the player in the dark margin at the west of the view, not
   judged standable. **Measured.** So a room
   edge is not a map edge, and what the game does with a jump at the
-  walkable map's edge is **not observed**.
+  walkable map's edge is **not observed**. What marks that edge in this room
+  (invisible wall instances, on its south side) is measured in § 19.11.
 
 [Mod live 1 results](../ForgePact/docs/jump-scenery-research.md#mod-live-1-results)
 
@@ -5865,6 +7434,370 @@ decompile nor a measurement; each bullet says which kind of reading it is.
 
 [Phase 2 static reading](../ForgePact/docs/flight-charms-research.md#phase-2-static-reading),
 [Mod live 3 results](../ForgePact/docs/flight-charms-research.md#mod-live-3-results)
+
+### 19.10 Walking speed and jump length
+
+What ForgePact's Mark 1 research (#166, phase 1) read on 2026-10-13, by the
+sources and with the caveats § 7.7 gives (a local scan of each script's
+compiled code for the names it references, its direct calls and the constant
+ids it passes, plus the ghidra MCP for the small functions). Every bullet is a
+**static reading** (2026-10-13) unless it says measured. The large bodies
+(`StatMovementSpeed`, `PlayerMovement`, `skillsLeap`, `playerJumpGravity`) did
+not decompile within the tools' limits, so what is below is which names each
+one touches and whether it reads or writes them, not the arithmetic. The
+**measured** parts come from the research's Live 2 session on 2026-10-13
+(the `mark1probe` rows, levers and `pos` sampler plus x64dbg logpoints, save
+slot 14, in `Town_01_rm`, on the same build): see
+[Mark 1 research, Live 2 results](../ForgePact/docs/mark1-set-research.md#live-2-results).
+The parts marked **measured, 2026-10-19** come from the research's phase 2
+session, Mod live 1 (the same character and game build, the probe extended
+with eleven builtin rows, a per-call stat log and a modal step per window,
+in `Town_01_rm` and the Outskirts of Inoya): see
+[Mark 1 research, Mod live 1 results](../ForgePact/docs/mark1-set-research.md#mod-live-1-results).
+
+- **The movement speed stat is read in the player's Step event.** The stat
+  dispatcher sends id 64 to `gml_Script_StatMovementSpeed` (3389), whose only
+  direct caller found is the dispatcher (3344). The scripts found asking the
+  dispatcher for id 64 are the player object's Step event (once),
+  `StatTotalDamage`, `StatAttackDamage`, `StatMagicSkillDamage`,
+  `TalentsSamurai` and `Mercenary_obj`'s Alarm 5. No request for id 64 was
+  found in `PlayerMovement` (not observed; the scan sees only constant ids at
+  direct call sites); it asks for id 336, which has no case in the dispatcher's table
+  ([skill sliders' reading](../ForgePact/docs/skill-sliders-research.md#returnspecificstat-the-dispatchers-case-table)).
+  **Measured** in Live 2 (`dbg-stat-movement`): `StatMovementSpeed` runs once
+  a frame, standing or walking, every call returning to the dispatcher's
+  direct call site in `ReturnSpecificStat` (2008 logpoint hits, one return
+  location), and nothing called it directly during a walk.
+- **Halving movement speed at the dispatcher does not halve the walk
+  (measured).** In Live 2 (`speed-stat`), multiplying id 64's result by 0.5
+  on every dispatcher call for 240 frames cut the walk's step from 5.979 px a
+  frame to 4.693 px: 0.785 of itself, not 0.5. The lever scaled the
+  dispatcher's answer (`changed-dispatch=240`) and never the getter's
+  (`changed-getter=0`, `skip=240`): every local `StatMovementSpeed` call
+  inside the dispatcher returned something the probe could not read as a
+  number, so the getter route never scaled, against the probe core's tested
+  model, which scales such a nested call at the getter. Halving the
+  dispatcher's id-64 answer gave 0.785 of the step. Whether the step is not
+  proportional to it (base, cap, floor), whether the walk also reads
+  movement speed by a route the dispatcher lever does not reach (e.g. the
+  cached `pSt` values `PlayerMovement` reads), and why the getter's own
+  result was not a number to the probe (`skip=240`) are **not established**;
+  the last is an open instrument question for the choice of speed lever.
+- **The walk's per-frame step comes in multiples of half its modal step
+  (measured). The modal step is robust to occasional slow frames within one
+  window, and compares across windows only at the same mean frame time.** In
+  the same Live 2 (`forgepact-166-mark1-set-live-2.md`, T7 and its recheck),
+  the per-frame steps of a 240-frame walk were not one value: unscaled, 138
+  frames moved 5.979 px, 6 moved 2.989 and 4 moved 8.968; with the id-64
+  answer halved, 128 frames moved 4.693 px, 13 moved 7.039 and 2 moved 2.346.
+  Every step is 0.5, 1 or 1.5 times that walk's most common step. Plausibly a
+  frame-time factor in steps of 0.5 multiplies the step (inferred from the
+  quantization and T5; per-frame frame time was not recorded). A walk's total
+  distance moves with the frame time, and a sustained change in frame time
+  moves the modal step too: in T5 a per-frame logpoint took the frame from
+  13.4 to 23.2 ms, and the walk's modal step went from 5.979 to 8.968 px (its
+  steps were 8.968 and 11.958 px, 1.5 and 2 times the unscaled 5.979). So
+  comparing modal steps across windows is valid only when their mean frame
+  time (the probe's `ms=`) agrees within 10%, which is Live procedure 1's
+  rule; a window run under different instrumentation load can show a 1.5x or
+  2x frame-time artefact that is not a speed effect. The 0.785 above is a
+  ratio of modal steps taken at comparable frame time (T4 and T7, neither with
+  the per-frame logpoint).
+  Live 2 left the shape open, and Mod live 1 settled it as affine (next
+  bullet). What Live 2 could not tell apart: a step affine in
+  the answer (a base plus a part proportional to the stat, such as a "+N%"
+  stat over a base speed, which with these two points puts this character
+  near +75%); a step capped at a maximum the unscaled answer already exceeds;
+  or a walk that also reads a cached copy of the stat (`pSt`, plausibly
+  refreshed by Alarm 8, below) the dispatcher lever does not reach, which
+  would show as a lever whose effect drifts within a window (the 128 frames
+  at one constant step argue against it but do not rule it out). The first
+  two predict different levers, and one measured ratio cannot tell them
+  apart.
+- **The walk's step is affine in the movement speed stat (measured,
+  2026-10-19).** In Mod live 1 (`speed-sweep`, `speed-half`), with id 64's
+  answer multiplied at the dispatcher by 1.5, 0.75, 0.5, 0.25, 0 and -0.5
+  for a walk each, the modal step went 1.215, 0.893, 0.785, 0.678, 0.570 and
+  0.355 of the unlevered 2.989 px, every frame of each window at that one
+  step. All six points lie on one line to within 0.02%: the step is
+  proportional to the answer plus about 200 (fitted 200.0), so this
+  character's 151 walks at 1.755 times the step an answer of 0 gives. No cap
+  was reached up to an answer of 226.5, a negative answer slowed the walk
+  further, and the same 0.785 at half the answer as Live 2 found came back at
+  another frame rate. Answering about -24.5, (151 - 200) / 2, gave a ratio of
+  0.500. The id-64 call came once a frame, 151 each time, outside every row
+  the probe wraps (`PlayerMovement`, `CheckTalentUse` and the rest), as the
+  static reading placed it in the player's Step event (`stat-trace`), and
+  `StatMovementSpeed` was never called outside the dispatcher. Where in the
+  Step event the answer is turned into the step is not read, so the constant
+  200 is measured for this game build, not read.
+- **The walk's step halved between two sessions (measured, 2026-10-19).**
+  Mod live 1, at 6.94 ms a frame, measured a modal step of 2.989 px against
+  Live 2's 5.979 px at 13.4 ms: a step ratio of 0.500 at a frame time ratio
+  of 0.518. The step halved exactly while the frame time did not halve; a
+  step proportional to frame time would have been about 3.10 px, 3.6% off
+  the measured one. The cause (the frame clock, a target-rate setting or a
+  per-frame constant) is **not established**, so nothing here supports
+  scaling a step, or a frame-counted window, by measured frame time.
+- **Gear changes the unlevered step (measured, 2026-10-19).** In the Mark 1
+  research's Mod live 2
+  ([Mod live 2 results](../ForgePact/docs/mark1-set-research.md#mod-live-2-results)),
+  at the same 6.93 to 6.96 ms a frame as Mod live 1, Sorak wearing the four
+  Mark 1 pieces in place of his own helmet, body armour, boots and gloves
+  walked at a modal step of 2.385 px with every lever off (two control walks,
+  2.385 both), against Mod live 1's 2.989 px in his own gear. So a walk
+  control is valid only for the gear it was taken in.
+- **The half walk measured with the set worn (measured, 2026-10-20).** In the
+  Mark 1 research's Mod live 3
+  ([Mod live 3 results](../ForgePact/docs/mark1-set-research.md#mod-live-3-results)),
+  at 6.93 to 6.94 ms a frame, Sorak in the four pieces walked at 2.385 px with
+  the switch off (two control walks, as in Mod live 2) and at 1.192 px with
+  it on, on all 103 watched frames free of a cast's slowdown (`on-speed`):
+  0.4998 of the control. So the set's answer of (x - 200) / 2 to the local
+  movement speed calls halves the walk in this gear too, as `speed-half`
+  found (0.500) in his own.
+- **What `StatMovementSpeed` reads.** The player's `playerBuff` (about 380
+  reads) through the `GetBuffValue` and `GetBuffStack` methods, `buffArray`,
+  `debuffArray`, `buffMult` and `skpDb`; it asks the dispatcher for ids 106,
+  531, 532 and 598 (106 is faster cast rate; the other three have no case),
+  calls `ReturnSubTalentLevel` and `LoadSubTalentDamage`, and uses `floor`
+  and `power`. **Whether it caps is not established**: this build compiles
+  `min`, `max` and `clamp` inline (the scan finds no named builtin for them),
+  so a cap would not show as a name.
+- **The speed names the walk touches.** `PlayerMovement` (2774) reads
+  `hSpeedFactor` and `vSpeedFactor` (five sites each, no write found),
+  `mobileSpeedFactor` and `roomSpd`, and its stat values `pSt`. The player's
+  Step event reads `move_dist`, `new_x`, `new_y`, `hSpeedFactor`,
+  `vSpeedFactor`, and `mountSpeed` from another instance, writes `moveOverrideHor` and
+  `moveOverrideVer`, and uses `mp_linear_step`. Which of these the step's
+  final distance is computed from is **not established**. **Measured** in
+  Live 2 (`walk-mover`): during a walk `PlayerMovement` runs once a frame, but
+  none of its calls, nor any call of `CheckTalentUse`, `TalentUse`,
+  `TalentUseSetSpeed`, `ReturnSpecificStat`, `StatMovementSpeed`,
+  `skillsLeap`, `playerJumpGravity` or `StatJumpPower`, changes the player's
+  position: the walk's displacement is applied somewhere outside all of them.
+  **Measured, 2026-10-19** (Mod live 1, `speed-builtin`, `dbg-walk-movers`,
+  `speed-factor`): eleven movement builtins hooked beside those rows
+  (`place_meeting`, the `mp_linear_step`, `mp_potential_step`, `move_*` and
+  `motion_*` families and `move_and_collide`) moved no walk either; the
+  player called `place_meeting` 8270 times during one, and none of the
+  others was called at all. x64dbg logpoints on `PlayerMoveSkill`,
+  `PlayerMoveSkillFunc` and `CA_playerMove` logged no hit over a walk or a
+  walk with a cast while the control logged. Holding `hSpeedFactor` or
+  `vSpeedFactor` at half during `PlayerMovement` left the step unchanged,
+  but the values the probe read from them were 163556 and 163557,
+  consecutive whole numbers unlike a speed factor, so whether the walk
+  scales with those members is **not established**.
+- **Jump Power is read by the player's Alarm 8 event**, the only script found
+  asking the dispatcher for id 66 (`gml_Script_StatJumpPower`, 3391). That
+  event asks the dispatcher about 350 times, so it is plausibly the routine
+  that refreshes the player's stat values; that fits § 19.1's measurement
+  that `StatJumpPower` logged no call during a jump. `StatJumpPower` reads
+  only `playerBuff`, through `GetBuffValue`. **Measured** again in Live 2
+  (`dbg-stat-jump`, `jump-stat`): an x64dbg logpoint on its entry logged no
+  hit over six jumps while the control logpoint kept logging, and a x3 on id
+  66 at the dispatcher found no call to scale; the jumps' lengths did not
+  change.
+- **`gml_Script_skillsLeap` (3664)** has three direct callers found: the
+  player object's Step event, `ClassStepEvent` (560) and `Mercenary_obj`'s
+  Step event. It sets `x` and `y` at three sites each (on which instance is
+  not read: the script also creates instances of many kinds and handles leap
+  skills' damage), sets `direction` (four sites), `deltaSpeed` (two) and
+  `max_range` (one), reads `height` and `jumpDirection`, and calls
+  `gml_Script_PlayerMoveSkill` (2776, which reads `pSt` and sets `x` and
+  `y`), `gml_Script_IsObtainablePlace` (2076, five sites, § 19.11),
+  `InheritModifiers` and the collision builtins `collision_circle`,
+  `collision_circle_list`, `instance_place`, `instance_position`,
+  `place_meeting` and `position_meeting`, naming `Collision_Parent_obj`,
+  `Wall_Parent_obj` and `Block_obj`. It asks the dispatcher for id 337 (no
+  case) and for damage stat ids. It references no mouse coordinate, so the
+  jump's target is plausibly decided before it runs (the Step event reads
+  `mouse_x`, `mouse_y`, `xMouse` and `yMouse`).
+- **`jumpDirection` is set up by the scenery.** The Create
+  events of `Collision_Parent_obj`, `Collision_Prop_obj` and about thirty
+  cliff objects reference it, so it is plausibly the direction a cliff lets a
+  leap go down, read from the prop a leap meets. Whether the player also
+  carries it was not read: `skillsLeap` reads it on an instance this reading
+  did not identify.
+- **`gml_Script_playerJumpGravity` (2764)** has one direct caller found, the
+  player object's Step event. It reads `x` and `y` (no write site found),
+  `height`, `pSt` and `playerEffect`, sets `stickHost`, references `unstuck`,
+  `unstuckDir`, `myShadow`, `groundDepth` and `playerSkipCollisions`, and
+  calls `InstancePlaceTallest` (599), `IsInWater` and `UpdateDepth`; it asks
+  the dispatcher for id 337 too. So by this reading `skillsLeap` (or
+  `PlayerMoveSkill` inside it) moves the player during a jump and
+  `playerJumpGravity` handles the landing side. Both run every frame of a
+  jump (§ 19.1, **measured**). **Measured** in Live 2 (`jump-mover`): the
+  jump is moved by `skillsLeap` alone, 102 moving calls in a jump with the
+  cursor about 100 px away (96.9 px covered) and no movement outside it;
+  `playerJumpGravity` ran 101 times in the same jump and never moved the
+  player.
+- **Scaling `skillsLeap`'s displacement scales the jump (measured).** In
+  Live 2 (`jump-move`), multiplying the position change of each local
+  `skillsLeap` call by 3 tripled the jump: 290.7 px against 96.9 px with the
+  cursor about 100 px away (3.00 times), and 738.8 px against an unscaled
+  250.3 px with it about 300 px away (2.95 times), well past the jump's usual
+  reach of about 246 px (§ 19.5). Whether the game's own landing checks still
+  hold at the scaled landing point was not measured.
+- **The shipped three-times jump (measured, 2026-10-19).** In the Mark 1
+  research's Mod live 2
+  ([Mod live 2 results](../ForgePact/docs/mark1-set-research.md#mod-live-2-results)),
+  the Mark 1 set read the jump's maximum M as jumpscenery's cap, 250.3 px,
+  and its scaled jumps landed 734.9 px (cursor 300 px away), 740.9 px (cursor
+  110 px away) and 750.9 px (cursor 510 px away) from the take-off, 2.94 to
+  3.00 times M, toward the cursor and not at it. With the switch off a jump
+  with the cursor 101 px away covered 96.9 px, and one with the cursor 301 px
+  away 250.3 px, as before. The landing's walkability is § 19.11.
+- **The game has its own collision skip.** `playerSkipCollisions` is
+  initialised in the player's Create event and read in its Step event, and is
+  referenced through another scope by `playerJumpGravity`, the player's
+  collision event with `Collision_Parent_obj`, `Krampus_obj` (2426) and
+  `Prison_Catapult_Bottom_obj` (3629)'s Alarm 0, which also references
+  `launchPlayer`, `forceMovePlayer`, `jump` and `zSpeed`. The player's
+  collision event with `Collision_Parent_obj` references `x`, `y`,
+  `xprevious`, `yprevious`, `speed` and `height`: the shape of an event that
+  puts the player back where it was. Whether `playerSkipCollisions` gates
+  that event, and who sets it when, is **not read**.
+
+[Mark 1 research, Static reading](../ForgePact/docs/mark1-set-research.md#static-reading)
+
+### 19.11 The walkable map and its edge
+
+From the same reading as § 19.10 (2026-10-13). Static unless marked.
+
+- **What tells a walkable point in town (measured, 2026-10-13).** In the
+  Mark 1 research's Live 3 session
+  ([Live 3 results](../ForgePact/docs/mark1-set-research.md#live-3-results)),
+  the probe called, with the player as `self`, `place_meeting` against
+  `Collision_Parent_obj` (957) at a point, `collision_line` from the player
+  to it against `Wall_Parent_obj`, and `mp_grid_get_cell` on
+  `global.pathGrid`, in `Town_01_rm`:
+  - On open floor, the player's own position included, `place_meeting`
+    answered a `real` 0, `collision_line` a `ref` -4 (`noone`) and the grid
+    cell 0. Called this way, `place_meeting`'s answer is a number, 0 or 1,
+    not a `bool` (§ 19.3 measured a `bool` inside the game's own calls).
+  - Inside a prop, the Bounty Board (`Bounty_Board_obj`), only
+    `place_meeting` met anything (`real` 1, `instance_place` on the family
+    naming the board); the grid cell read free and the line clear.
+  - The town's south edge is an invisible wall: `Invisible_Wall_Not_Minimap_obj`
+    instances, which `place_meeting` meets as `Collision_Parent_obj` and
+    `collision_line` returns as `Wall_Parent_obj`. Scanning toward it in
+    16 px steps, `place_meeting` met it one step before the grid cell read -1
+    and the line crossed it. Nothing on screen draws it. Water
+    (`Block_Dynamic_Sprite_obj`) and fallen rocks and trees
+    (`Fall_Rock_01_obj`, `Fall_Dead_Tree_02_obj`) blocked both the grid and
+    `place_meeting`.
+  - Past the room's bottom the grid cell read -1, but `place_meeting` met
+    nothing once the points were past the invisible walls.
+  - None of the four tile layers the probe read (`Darkness`, `Hay_Ground`,
+    `Leaves_Ground` and `Water`) marks the edge. The probe keeps at most four
+    tile layers, and `Town_01_rm` has more (its tile layers run from
+    `Darkness` to `Background_Tiles`, § 19.7), so whether a later tile layer
+    marks the edge was not read.
+
+  So in a town a landing point is walkable when it lies inside the room and
+  the player placed there meets nothing of `Collision_Parent_obj`; the
+  research records `walkable-test: combined`. Live 2's control had failed
+  (`walkable-control`, [Live 2 results](../ForgePact/docs/mark1-set-research.md#live-2-results))
+  because that build's probe counted any number of 0 or more as a meeting,
+  so `place_meeting`'s 0 printed as blocked; ForgePact 61243b2 corrected it.
+  A generated zone was measured later (next bullet).
+
+- **One edge of a generated zone (measured, 2026-10-19).** In the Mark 1
+  research's Mod live 1
+  ([Mod live 1 results](../ForgePact/docs/mark1-set-research.md#mod-live-1-results)),
+  the same reads were taken in the Outskirts of Inoya (`Act_01_01`, reached
+  through the town waypoint's map). At the arrival point and 32 px either
+  side every field read free (`zone-control`). Scanning 96 px steps out in
+  four directions (`zone-edge`), the floor upward ended at an
+  `Invisible_Wall_obj`: in 16 px steps across it, `place_meeting` met the wall
+  one step before the path grid cell read -1 and the wall line crossed it,
+  and past the wall `place_meeting` met nothing again while the grid cell
+  stayed -1 to the room's top edge, the cliff tile layer
+  (`Autotile_Fall_Cliff_tileset`) reading non-zero from the wall on. So, as in town, the
+  edge is an invisible wall that both readings see, and past it only the
+  grid still says no; the research records `zone-edge: both`. Elsewhere the
+  scans crossed cliff bands that only the grid and the wall line marked
+  (with the cliff tiles set), floor that read free again beyond them, and
+  scattered points both readings blocked, plausibly props; the `Void` tile
+  layer read non-zero at two points both readings called free. The
+  screenshot showed no void (the edge lay about 600 px above the player,
+  plausibly just out of view). One edge of one
+  zone was measured; whether every zone marks its edge this way, and how the
+  zone generator's outside rectangles line up with it, are **not
+  established**.
+
+- **Landings read with these fields hold at a jump's end (measured,
+  2026-10-19).** In the Mark 1 research's Mod live 2
+  ([Mod live 2 results](../ForgePact/docs/mark1-set-research.md#mod-live-2-results)),
+  the Mark 1 set's jump passed a landing only when the point and the points
+  16 px either side of it were inside the room, met no `Collision_Parent_obj`
+  and sat on a free path-grid cell, and each granted landing that was read
+  again with the player standing on it read free on every field. A take-off
+  at (912, 1560) aimed due south, whose three-times point lay past the
+  town's south edge (the family blocked from y 2038), backed off to a point
+  250.0 px south; a jump
+  west across the Bounty Board covered 718.9 px and landed past it. At the
+  town's south edge from (912, 1974) no candidate passed, and the jump went
+  its vanilla 40.3 px; the refusal came from the reads' answers (no read
+  failed, the family's rejections rose, and the grid answered free or
+  blocked, never "no grid"). At the Outskirts' edge the zone had loaded in a
+  different layout from Mod live 1's, and the edge was found again by the
+  same signature (an `Invisible_Wall_obj` met by the family, then the grid
+  alone blocked over the cliff tiles): a jump aimed past it was refused and
+  stopped 125.1 px on, inside the wall. So one zone's edge sits in a
+  different place from one load to the next, while its marking stays the
+  same.
+- **The view the cursor can reach (measured, 2026-10-19).** In the same
+  session the view was 1280 × 720 room pixels centred on the player, in town
+  at both points read: an on-screen cursor reaches at most about 645 px from
+  the player horizontally and about 741 px at a corner, so with the jump's
+  M of 250.3 px no on-screen cursor lies past 3M (751 px).
+
+- **The path grid marks blockers, not the map's edge.**
+  `gml_Script_PathFindControllerCreate` (2714) destroys any earlier
+  `global.pathGrid`, sets `global.gridSize` to 16, creates an mp_grid of
+  `room_width` / 16 by `room_height` / 16 cells, clears it, and adds every
+  instance of `Collision_Parent_obj` (957) with precise masks, then those of
+  `Player_Only_Passage_obj` (3554) and `Projectile_Only_Passage_obj` (3675)
+  when any exist. It ends with `gml_Script_PathFindApplyStaticBlockers`
+  (2718): when `global.pathStaticRoom` is the current room, every rectangle in
+  `global.pathStaticRects` (four numbers each) is added too. Neither function
+  marks a cell because it lies beyond the floor: a cell is blocked only where
+  one of those instances or rectangles covers it. Read from the MCP decompile
+  of both functions. § 22.7 measured the grid itself. **Measured in part
+  (Live 3, above):** at the town's south edge the blocked cells are where
+  the invisible wall instances stand, and a point past the room reads -1;
+  but the cells under the Bounty Board, which `place_meeting` meets as a
+  `Collision_Parent_obj` instance, read free, so not every instance of the
+  family blocks a cell in that room. Why is not established.
+- **In a generated zone the rectangles are the outside.** The rectangles come
+  from `gml_Script_PathFindBuildStaticBlockers` (2717), whose one direct caller found
+  is an anonymous function of `objZoneGenV2` (3259)'s Create event. It reads
+  the generator's `outsideBlockList`, `zoneOuterScale` and `global.gridSize`
+  and the room size, and writes `global.pathStaticRects` and
+  `global.pathStaticRoom`. So in a generated zone the area outside the zone
+  is plausibly blocked in the path grid through those rectangles. Name scan;
+  the arithmetic was not read. In a room the generator did not build, no
+  script was found that marks the outside; in `Town_01_rm` the edge measured
+  is placed instances, the invisible walls above (Live 3).
+- **The game's own "can something stand here" test.**
+  `gml_Script_IsObtainablePlace` (2076) takes a point. When no
+  `objZoneGenV2` (3259) exists it answers yes, for any point. Otherwise it
+  answers no for a point outside the room, no when the generator's
+  `heatGridL` is negative, and yes only when the point's 32 px cell and its
+  four diagonal neighbours all hold something other than 30000. Read from the
+  MCP decompile.
+- **The heat grid is the generated zone's wall map.** `heatGridL` is written
+  by `objZoneGenV2`'s Create event and by `gml_Script_ZoneGenMakeZoneWalls`
+  (3601), so 30000 plausibly marks a wall or void cell of a generated zone.
+  `IsObtainablePlace` has callers across the game: `skillsLeap` (five sites),
+  `skillsBlink` (3660), the player's Step event, `PlayerUpdateTimers` (2794),
+  `TalentsUniversal`, the enemy creators, `Quest_Manager_obj` and the platform
+  objects. Whether `objZoneGenV2` exists in a town, and so whether the test
+  says anything there, is **not established**.
+
+[Mark 1 research, Static reading](../ForgePact/docs/mark1-set-research.md#static-reading)
 
 ---
 
@@ -6852,6 +8785,20 @@ follow-up's own; § 16.3's info-key table lists key `"11"`, and ForgePact
   whether key `"11"` and the name were saved with the item or put back by that
   registration was not separated. **Measured** for that load; what a piece
   shows with the plugin removed is **not established**.
+- An armour piece (ForgePact #166's Mark 1 Body Armor, a class 1 item given
+  a sprite added at run time under key `"11"`, and given a ground copy of
+  its own by the plugin's `LootGroundInit` consumer): the bag drew the `"11"` sprite, the
+  ground drew the plugin's ground copy, the **worn** body-armour slot drew
+  the same `"11"` sprite as the bag, and the tooltip drew no item icon at
+  all, only its text rows. Before the plugin set key `"11"`, the same piece
+  showed its base item's own bag icon and ground sprite, never the error
+  sprite. **Measured** (the Mark 1 research's Mod live 2, 2026-10-19,
+  `art-default`, `art-load`, `art-ground`, `art-bag`, `art-equipped`,
+  `art-tooltip`:
+  [Mod live 2 results](../ForgePact/docs/mark1-set-research.md#mod-live-2-results)).
+  So the worn slot reads key `"11"` as the bag does, and the tooltip draws no
+  icon for armour either, as for charms; for a class other than charms,
+  keys, consumables and armour it is still **not established**.
 
 ---
 
@@ -7235,12 +9182,163 @@ not observed, not absent.
   Heroic or a Satanic unique, then calls `CreateDefaultParams` and the
   placement. Its direct callers are `VaultUse` (4597) and a Chaos Tower NPC
   closure. **Static reading** (2026-10-11). Called by name with the local
-  player as `self` (not a shape the game's own callers use), ten calls placed
+  player as `self` (which `self` the game's own callers pass was not read
+  then; see the 2026-10-20 bullets below), ten calls placed
   ten items: seven Heroic (9) and three Satanic (6), none Angelic or Unholy,
   and no charm. **Measured** (2026-10-12).
+- Read again on 2026-10-20 for ForgePact's Mark 1 drops (#166), through the
+  hub's ghidra MCP and, for the two callers the MCP could not decompile, a
+  headless decompile on the same build (`498d5885…`). The bullets below
+  extend the one above.
+- `DropItemHeroic` (1374) takes three arguments: an x, a y and a sub-list
+  index. When the x or the y is undefined it reads that coordinate from
+  `self`; when the index is undefined it uses 5. **Static reading**
+  (2026-10-20).
+- It draws a random entry of `Controller_obj.lootListUnique` at that index
+  and draws again whenever the entry is not an array. For a triple it looks
+  the entry up in `GetUniqueRepoStruct` (819), one lookup per draw, and keeps
+  it only when the definition's flag 40 is clear and its rarity (field 27,
+  § 13.4) is neither 7 nor 10; otherwise it draws again, until it keeps one.
+  So, unlike `DropUniqueItems` (§ 23.8), a call never comes up empty: an
+  entry listed r times among the T_H entries of the sub-list that pass both
+  tests comes out r / T_H of the time, whether or not the random index can
+  reach the list's length. **Static reading** (2026-10-20).
+- Once an entry is kept it calls `CreateDefaultParams` (2349) once, from the
+  entry's sub-type and base and a constant, and then one unnamed placement
+  routine with the position, the entry's own type and those parameters
+  (§ 23.8 names `LootGroundCreate` for the ordinary roll). So the placed
+  item's class is the entry's type, as in the Angelic roll, and an entry
+  standing in for another item must share that item's class. **Static
+  reading** (2026-10-20).
+- Its direct callers, by a byte scan for direct calls (`FindCallers.java`;
+  in the same run `CreateDefaultParams` showed 177 direct sites, the positive
+  control): exactly two, one in `VaultUse` (4597) and one in an unnamed
+  closure that reads `floor` and `towersCleared` around the call, the Chaos
+  Tower NPC closure named above. A call through the script table is invisible
+  to that scan. The ghidra MCP's callers, callees and disassembly for
+  `DropItemHeroic` and `VaultUse` are empty: not observed, never "none".
+  **Static reading** (2026-10-20).
+- `VaultUse` runs when a vault item (repository category 19 "vault", seven
+  entries, § 13.2) is used by its right-click in the bag, the inline dispatch
+  of [§ 21.4](#214-using-an-item-from-the-backpack). Its body sorts the used
+  vault into one of seven tiers, 0 to 6, from a value it asks `GetItemInfo`
+  for (which value was not read; that the seven tiers are category 19's seven
+  vaults is an inference). It sets the roll's sub-list index to 4 and moves
+  it to 5 on a random check whose threshold rises with the tier (400, 800,
+  1000, 1500 and 2500 for tiers 0 to 4, 6500 for tiers 5 and 6). A second
+  random check, with thresholds 1, 5, 10, 30 and 50 for tiers 0 to 4 and 100
+  for tiers 5 and 6, sends the use to an unnamed draw of the Angelic kind
+  (next bullet) instead of `DropItemHeroic`; tier 5 then asks that draw for
+  rarity 7 only and tier 6 for rarity 10 only. The random draws' bound, and so
+  the chances themselves, were not read. When it does call `DropItemHeroic`
+  it passes its own `self` and `other`, the x and y of an instance it resolved
+  earlier in the body (which instance was not read), and that index. So a
+  vault's Heroic roll reads sub-list 4 or 5, not always the default 5.
+  **Static reading** (2026-10-20).
+- The unnamed draw `VaultUse` sends the rest to lies just before
+  `DropItemAngelicChance` (1368) in the executable. Its body takes the same
+  three arguments with the same fallback to `self`'s position, draws from a
+  unique list (which one was not read) until the kept entry's rarity is 7 or
+  10 (only 7, or only 10, when its third argument says so), then calls
+  `CreateDefaultParams` and the placement. That it is `DropItemAngelic`
+  (1366), one of the drop scripts the 2026-09-24 import left unnamed, is an
+  inference from its body and its place. **Static reading** (2026-10-20).
+- The Chaos Tower closure calls `DropItemHeroic` in a loop, behind a random
+  check, a number of times a script works out from `floor`, with all three
+  arguments undefined, so the position is the closure's `self`'s and the
+  sub-list is 5. **Static reading** (2026-10-20).
+- So, as far as is read, the Heroic roll runs when a player uses a vault or
+  that NPC, and not on a kill. **Static reading** (2026-10-20).
+- Not a reading of the game, and not measured: the Item Editor's catalog
+  (`hs_full_catalog.json`) lists 13, 15, 17 and 17 Heroic uniques of classes
+  0, 1, 2 and 4. Which of them `lootListUnique[5]` (380 entries, § 13.4) or
+  `[4]` holds is not established. ForgePact's `mark1probe pool` reads `[5]`
+  ([Phase 3 static reading](../ForgePact/docs/mark1-set-research.md#phase-3-static-reading)).
+- What the Heroic roll keeps on its lists, read by ForgePact's `mark1probe
+  pool` in Mark 1's Mod live 4 (2026-10-20, slot 14, nothing pushed):
+  `lootListUnique[5]` held 380 entries, of which the roll keeps **T_H = 203**
+  (93 of rarity 6 and 110 of rarity 9, counted with repeats); 48 are rarity
+  7 (31) or 10 (17), the T = 48 the Angelic roll keeps, and 129 are flagged
+  hidden. `[4]` held 221, of which it keeps 218, all rarity 6, and 3 are
+  hidden. Each of the classes 0, 1, 2 and 4 has kept triples on both lists
+  (10 to 23 per class and list), and the stand-in Mark 1 chose for each is
+  listed once. With one entry pushed per Mark 1 piece, 100
+  by-name calls gave 2 pieces, inside the band for 4 / (203 + 4).
+  **Measured**
+  ([Mod live 4 results](../ForgePact/docs/mark1-set-research.md#mod-live-4-results)).
+  Which list a vault's call reads stays a static reading (above), so the
+  rate per vault is not measured.
+- The ordinary roll's lists 0 to 4, read by `mark1probe pool kill` in Mark
+  1's Mod live 5 (2026-10-20): lengths 50, 61, 79, 152 and 221 again (§ 13.4),
+  and for each of the classes 0, 1, 2 and 4 a rarity-6 triple the roll keeps
+  that is held the same number of times on every one of the five lists (0
+  times each). 40 by-name `DropUniqueItems` calls at 200 copies of each piece's
+  entry built 35 pieces, all rarity 6, tier 5. **Measured**
+  ([Mod live 5 results](../ForgePact/docs/mark1-set-research.md#mod-live-5-results)).
 - The Angelic roll keeps only rarity 7 or 10 (§ 13.4).
 - So of these three rolls only `DropItemHeroic` can drop a Heroic (9) unique.
-  **Static reading** (2026-10-11).
+  **Static reading** (2026-10-11). This is about the rarity each roll keeps,
+  not about which items a kill can give: ForgePact's Mark 1 pieces (#166)
+  join the ordinary roll through a Satanic (6) stand-in entry of the piece's
+  own class, which that roll keeps, and the rewrite before the item is built
+  turns a hit on the stand-in into the piece (the kill route below, and
+  [Phase 3 kill route static reading](../ForgePact/docs/mark1-set-research.md#phase-3-kill-route-static-reading)).
+- Read again on 2026-10-20 for the Mark 1 pieces' kill route, after the
+  owner decided they drop from ordinary kills anywhere, the way the game's
+  own SS set items do (White Mage's Sacred set, Zealot's Prophecy), through
+  the hub's ghidra MCP on the same build. The bullets below extend those
+  above.
+- A kill reaches the ordinary unique roll: `Enemy_Parent_obj`'s Destroy event
+  calls `DropItem`, which calls `LoadDrops` (§ 13.1), and `LoadDrops` calls
+  `DropUniqueItems` (first bullet). Drop type 45 is the type § 13.1 measured
+  as "a unique item" by opening every gate on one monster (2026-08-27), so it
+  is the gate in front of this roll on a kill. How often type 45's gate
+  passes on a kill was not read and not measured. Chests, goblins,
+  destructibles and piles reach `DropItem` too (§ 13.1, § 13.6), so they
+  reach the same roll; that is an inference. **Static reading** (2026-10-20,
+  the kill route), with type 45's meaning **measured**.
+- That route holds the only direct call from a kill to `DropUniqueItems`
+  (§ 13.12). In ForgePact's Mark 1 Mod live 6 (the drops workorder's Live 3,
+  2026-10-20), four natural uniques dropped from kills with `DropUniqueItems`
+  not entered and type 45's chance 0 on every `LoadDrops` array (§ 13.1;
+  **measured**, one session). That `DropItem`'s own draw builds a kill's
+  uniques was then measured by Mod live 7 (§ 13.1, § 13.12).
+- `DropUniqueItems` (1424), decompiled again: it picks the sub-list k from 0
+  to 4 by a zone value with random step-ups, draws one random index of
+  `Controller_obj.lootListUnique[k]`, looks the entry up in
+  `GetUniqueRepoStruct`, keeps it only when its rarity is below 7 and it is
+  not flagged hidden, then calls `CreateDefaultParams` and the placement with
+  the entry's own type. A refused draw places nothing; there is no second
+  draw (§ 23.8). There is no branch for set items anywhere in it.
+  **Static reading** (2026-10-20, the kill route), agreeing with the first
+  bullet and § 23.8.
+- The game's set items are ordinary uniques that the unique repository rates
+  Satanic (6). In ForgePact's Mark 1 drops live 1 (2026-10-20, D4), a
+  by-name call of `DropItemHeroic` placed "Sacred Pendant" from the unique
+  repository (`c` 1) at `rarity=6`. In the same session (D5)
+  `lootListUnique[4]` held 218 entries with flag 40 clear and a rarity
+  neither 7 nor 10, every one rarity 6, and `[5]` held 93 rarity-6 entries
+  among its 203 such entries. **Measured** (2026-10-20). The
+  ordinary roll keeps every rarity below 7, so a set piece on lists 0 to 4
+  can drop from it like any other Satanic unique; that is an inference from
+  the reading above. Which sub-lists hold the Sacred or Zealot's Prophecy
+  pieces is **not established**.
+- `GetSetInformation` maps a set's name to one of 70 set indices. Other
+  set scripts exist by name (`GetSetName`, `GetSetNames`,
+  `DefineSetPieceRequirements`) and were not read, and how an item names the
+  set it belongs to was not read. No drop script names a set (the ghidra
+  MCP's function search over "Drop", "Set", "Unique" and "LootList"): not
+  observed by name, never "there is none". **Static reading** (2026-10-20,
+  the kill route).
+- Not established: which sub-lists hold set pieces, how often a kill runs
+  drop type 45, and the distribution of k. The MCP's callers and disassembly
+  for `DropUniqueItems` are empty, as for `DropItemHeroic`: not observed.
+  **Static reading** (2026-10-20, the kill route).
+- Not readings of the game, and not measured: HS Offline Tracker's item table
+  (`ForgePact/src/forgepact_tracker/item_table.py`) labels the Sacred and
+  Zealot's Prophecy pieces "Set", most at grade 6 (SS), with odds of one in
+  147,455 to 555,250, and the Item Editor's catalog likewise labels set
+  items. Neither label says how the game drops them.
 - The Item Editor's catalog (`hs_full_catalog.json`, not a reading of the
   game and not measured) lists normal charms as Small (`b` 0-19, 1x1), Large
   (20-39, 1x2) and Grand (40-59, 1x3), with no normal 2x2 or 1x5 charm. Its 2x2
@@ -7346,8 +9444,14 @@ sprite table gives each sprite's name and size.
   generates, which has no `Pickup_` companion, so the lookup fails and the
   ground item draws `Error_spr`. That is the reading behind Live 1's
   `sprite-draw: partial` (§ 23.5: our sprite drawn in the bag, the error
-  placeholder on the ground). **Static reading** (2026-10-12); the generated
-  name itself was not read live.
+  placeholder on the ground). **Static reading** (2026-10-12). The generated
+  name reads `__newsprite<n>`: `sprite_get_name` on the ground sprites of
+  ForgePact's four Mark 1 pieces, which ForgePact adds with `sprite_add` and
+  sets after the game's call, read `__newsprite32286`, `__newsprite32288`,
+  `__newsprite32290` and `__newsprite32292`, one per piece in the order they
+  were made. **Measured** (2026-10-21, Mark 1 Mod live 10, `soulprobe
+  ground`).
+  [Mod live 10 results](../ForgePact/docs/mark1-set-research.md#mod-live-10-results)
 - `gml_Script_LootGroundDraw` (2355) draws the ground item's `sprite_index`,
   after a glow drawn from its `img`. **Static reading** (2026-10-12).
 - `LootGroundInit` has 10 direct call sites. **Static reading** (2026-10-12,
@@ -7360,6 +9464,27 @@ sprite table gives each sprite's name and size.
   Mod live 1, `ground-control` and `ground-icon`). That the lookup goes by
   name stays the reading above.
   [Mod live 1 results](../ForgePact/docs/flight-charms-research.md#mod-live-1-results)
+- A ground item lying on the town's waypoint shows only its name label,
+  whatever its sprite. In Inoya, a Mark 1 piece on the
+  waypoint showed its label and no sprite (Mark 1 Mod live 2, 2026-10-19,
+  step V2a of its capture `forgepact-166-mark1-set-mod-live-2.md`, kept with
+  the hub's workorder files and not tracked), and four pieces placed on it
+  showed their four labels and no sprite of any kind while ForgePact had set
+  its own sprite on all four (Mod live 9, 2026-10-21). The same four, placed
+  138 px south of the waypoint and viewed from 128 px away, showed their
+  sprites, and a debugger logpoint on `LootGroundDraw` counted 0 before they
+  were placed, 745 hits about 5 s after the player moved beside them and
+  2,099 when it was cleared (Mod live 10, 2026-10-21, `art-spawn` and
+  `dbg-ground-draw`). **Measured**, for what the screen shows. **Why** the
+  sprite is missing is **not established**: no debugger ran with a piece on
+  the waypoint (the `LootGroundDraw` count above was taken off it, and the
+  two waypoint observations are screenshots), so "drawn, then covered by the
+  waypoint" cannot be told apart from "never drawn" (`LootGroundDraw` not
+  running for an item there, or the draw skipped). Do not assume a ground
+  draw or a draw hook fires for an item on the waypoint. So a ground check
+  is made off the waypoint; a count of sprite writes cannot see this.
+  [Mod live 9 results](../ForgePact/docs/mark1-set-research.md#mod-live-9-results),
+  [Mod live 10 results](../ForgePact/docs/mark1-set-research.md#mod-live-10-results)
 
 ### 23.8 The ordinary unique roll makes one draw
 

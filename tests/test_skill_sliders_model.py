@@ -23,6 +23,9 @@ SPEC_DOC = ROOT / "docs" / "models" / "skill-sliders-spec.md"
 FIXTURE = ROOT / "hs-game-sdk" / "curated" / "skill_sliders_measurements.json"
 FORGEPACT_MAIN = ROOT / "ForgePact" / "plugin" / "ModuleMain.cpp"
 SLIDERS_HEADER = ROOT / "ForgePact" / "plugin" / "include" / "ForgePact" / "SkillSlidersMod.hpp"
+# The plugin's one ReturnSpecificStat detour, which Projectile Speed runs in
+# beside the Mark 1 set's half walk (ForgePact #166).
+STAT_HOOK_HEADER = ROOT / "ForgePact" / "plugin" / "include" / "ForgePact" / "ReturnSpecificStatHook.hpp"
 
 sys.path.insert(0, str(SDK_PY))
 from hs_game_sdk import skill_sliders_model as model  # noqa: E402
@@ -542,13 +545,23 @@ class LeverParityTests(unittest.TestCase):
     def test_a_slider_adds_after_the_game_and_only_in_scope(self):
         source = self._sliders()
         # The original runs first; the value is added to what it returned.
-        self.assertEqual(source.count("RValue& r = orig ? orig(S, O, R, argc, A) : R;"), 2)
+        # Amount and AoE call it in the class's own hook; speed is the shared
+        # ReturnSpecificStat detour's consumer, which runs after the original.
+        self.assertEqual(source.count("RValue& r = orig ? orig(S, O, R, argc, A) : R;"), 1)
         self.assertIn("r = RValue(native + value);", source)
         self.assertIn("RValue(0.0), RValue(native + value) });", source)
+        if not STAT_HOOK_HEADER.is_file():
+            self.skipTest("ReturnSpecificStatHook.hpp is not in this ForgePact checkout")
+        shared = STAT_HOOK_HEADER.read_text(encoding="utf-8", errors="replace")
+        hook = shared[shared.index("inline RValue& Hook("):]
+        hook = hook[:hook.index("return r;")]
+        self.assertLess(hook.index("RValue& r = original ? original(S, O, R, argc, A) : R;"),
+                        hook.index("if (skillSliders) skillSliders(S, argc, A, r);"))
+        self.assertIn("ReturnSpecificStatHook::skillSliders = OnReturnSpecificStat;", source)
         # Amount and AoE: in scope by the call's own self; speed: stat 75 inside the player's scope.
         self.assertIn("if (InScope(state, S)) Boost(r, value, state, script);", source)
-        self.assertIn("if (!t_SpeedScope) return r;", source)
-        self.assertIn("id != kProjectileSpeedStatId) return r;", source)
+        self.assertIn("if (!t_SpeedScope) return;", source)
+        self.assertIn("id != kProjectileSpeedStatId) return;", source)
         self.assertIn("inScope = mod.InScope(state, S);", source)
 
 

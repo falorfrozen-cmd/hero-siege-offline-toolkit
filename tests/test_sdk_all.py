@@ -100,6 +100,26 @@ class TestSdkArtifacts(unittest.TestCase):
         entries = [info["finished_item"], info["loader"], info["affix_slots"], tooltip["stat_line"], *info["info_keys"]]
         self.assertTrue(all(e["status"] in ("measured", "static_reading") for e in entries))
 
+        # The game's set display and a skill grant's line (ForgePact #166): measured
+        # from Item Truth's tooltip captures; the set tables, a static reading.
+        # GameMaker colours are 0xBBGGRR integers, never strings or floats.
+        section, grant, sets = tooltip["set_section"], tooltip["skill_grant"], info["sets"]
+        self.assertEqual(section["status"], "measured")
+        self.assertEqual(grant["status"], "measured")
+        self.assertEqual(sets["status"], "static_reading")
+        self.assertEqual(sorted(section["colours"]),
+                         ["bonus_active", "bonus_inactive", "piece_not_worn", "piece_worn", "set_name"])
+        self.assertEqual(sorted(grant["colours"]), ["description", "line"])
+        for name, value in [*section["colours"].items(), *grant["colours"].items()]:
+            self.assertIs(type(value), int, f"colour {name} is not an int")
+            self.assertTrue(0 <= value <= 0xFFFFFF, f"colour {name} is not 0xBBGGRR")
+        self.assertEqual(section["bonus_formats"], {"5": "percent", "6": "flat"})
+        self.assertEqual(sets["indices"], {"first": 1, "last": 70})
+        self.assertEqual(sets["required_pieces"]["values"], [2, 3, 4])
+        self.assertTrue(sets["scripts"])
+        for name in sets["scripts"]:
+            self.assertIn(name, GameScript.__members__, f"{name} is not an SDK script")
+
 
 @unittest.skipUnless(
     DATA_DIR.exists(),
