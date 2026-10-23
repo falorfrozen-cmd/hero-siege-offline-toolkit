@@ -112,7 +112,8 @@
         "the listed natural drops' and the placed item's structs (with the list memory on) were built through CreateItemNew in that frame or the one before (burst-fresh rose with burst-listed)",
         "GPV of Controller_obj.lootExplosionGiven read 0 while the floor collected and 1 once it had ended",
         "the floor's end landed the held items: both placed items lay on the ground afterwards, each with the itemTimeStamp it had when listed, and burst-landed read 12",
-        "the LootGroundInit detour saw each landed item twice (two lootann decide lines per stamp; 12 burst landings for the 6 kept entries); which two calls they were is not established",
+        "the struct that lands is the listed one, not a copy with the same itemTimeStamp: via=burst (B's announce, burst-landed=12) needs the landed item's key, which ForgePact derives from the item struct's object pointer, to equal a key kept when the entry was listed, and the list held that struct alive in between, so its pointer could not have been reused",
+      "the LootGroundInit detour saw each landed item twice (two lootann decide lines per stamp; 12 burst landings for the 6 kept entries); which two calls they were is not established",
         "with the list memory off (the rule before ForgePact#227) a placed Heroic item was decided held-bag-drop at the burst and the owner saw no line; with it on, one was decided announce via=burst and the owner saw its red SERVER line"
       ],
       "not_run": [
@@ -211,7 +212,6 @@
       "whether the two initialisations measured per landed item are LootGroundDrop's own LootGroundInit call and LootExplosion's, and that LootExplosion is the routine that ran (its logpoint was not run)",
       "whether a WormholeGiveReward reward uses the same held list",
       "in which room the tower's reward (DropItemHeroic) is given",
-      "whether the struct that lands is the listed one or a copy with the same itemTimeStamp",
       "that the ground item leaves the floor when it is listed (not watched live)",
       "that a bag drop on a floor is collected and stays held (not observed live)"
     ]

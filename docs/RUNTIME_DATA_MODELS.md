@@ -4320,10 +4320,14 @@ floor's fight and was detached), so those parts stay **not observed live**.
 - **Measured: the burst lands the held items.** When the floor ended ("Floor
   Cleared"), the list read `size=0` and the given flag `1`, and both placed
   items were on the ground near the character. Each carried the same
-  `itemTimeStamp` it had when it was listed, so the struct that landed is the
-  listed one or a copy with the same stamp (which of the two is not
-  established), and no `CreateItemNew` had built it in that frame or the one
-  before. ForgePact's `LootGroundInit` detour saw each landed item twice:
+  `itemTimeStamp` it had when it was listed, and no `CreateItemNew` had built
+  it in that frame or the one before. The struct that landed is the listed
+  one, not a copy (**measured**, Live procedure 1): ForgePact's `via=burst`
+  needs the landed item's key, which it derives from the item struct's object
+  pointer, to equal a key it kept when the entry was listed, and the list
+  held that struct alive in between, so its pointer could not have been
+  reused by another struct; B's `announce via=burst` and `burst-landed=12`
+  are such matches. ForgePact's `LootGroundInit` detour saw each landed item twice:
   two `lootann decide:` lines per stamp, and 12 burst landings for the 6
   entries the reader kept. That fits both `LootGroundInit` calls running for
   one item, but which two calls they were is **not established**: the
