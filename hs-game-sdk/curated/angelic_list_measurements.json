@@ -73,6 +73,52 @@
     "what": "Whether the game builds exactly one item dressed as Headhunter or Tyrant's Crown for each hit attributed to it, from the rewritten record, in place of the stand-in: the inject-build check reads ourHits= against built= / crown= / belt= and the ground. Not run in Live 1, because no list was accepted and nothing was pushed. In Live 2 ourHits grew by 65 while built= and belt= stayed 0: on every our-hit the rewrite found no field a in the returned struct, which read {\"b\":51.0,\"j\":0.0,\"c\":1.0}, refused, wrote nothing, and the game placed its own Liquor Holster. The fail is the plugin's rewrite, not the game refusing the item: the game was never handed the item's parameters, so whether it builds the item from parameters that carry its a was not observed there. A local reading of the chain (static reading, Session 5) found that LootGroundCreate stores its own a into the record before the item exists and that CreateItemNew reads a, b, c and j and stores none of them, so the rewrite moved to CreateItemNew's entry. In Live 3 the record there carried b, a, j, c with a numeric a on six of six vanilla hits; with Headhunter forced and 200 copies pushed, every one of 46 our-hits was rewritten from {\"b\":51.0,\"a\":648002927.0,\"j\":0.0,\"c\":1.0} (its own a each time) to {\"b\":2.0,\"a\":777002.0,\"j\":0.0,\"c\":0.0} and built by the game as itemType=8 with those values (ourHits=, built= and belt= each +46, refused=0, lootDelta=1 on every hit); the ground was labelled Headhunter and the owner's hover read a Headhunter. With both forced, crown= grew by 11 and belt= by 2, built= growth equal to ourHits= growth (13). A hit at the natural chance was not observed: every hit had the research lever's chance of 1e9.",
     "source": "forgepact-74-angelic-list-injection-live-1.md (steps 8-10); forgepact-74-list-injection-live2-live-1.md (step 8); forgepact-74-list-injection-live2-live-2.md (steps 5-8)"
   },
+  "potion_entries": {
+    "issue": "ForgePact #229",
+    "status": "measured (Live 1, 2026-10-23, research dll b7471e31767e6d4bc02d44bcb567194907ef09787f6aafa4c355c774a75a8035, slot 14, Hell, Outskirts of Inoya at zone level 243, one session)",
+    "source": "forgepact-229-gold-inlaid-potion-live-1.md",
+    "how": "angeliclist (ForgePact's pool verdict per kAngelicBases row) and the research build's angelicprobe pool find <t> <s> <b>: key, rarity and hidden are the definition's itemBaseInfoStruct \"28\", \"27\" and \"40\" from GetUniqueRepoStruct, read outside any roll; angelic_keeps is the Angelic roll's two filters (rarity 7 or 10, not hidden) and ordinary_keeps the ordinary unique roll's (rarity below 7, not hidden); list_counts[k] counts the entries of Controller_obj.lootListUnique[k] equal to the whole triple. The reading in words is docs/RUNTIME_DATA_MODELS.md section 13.13.",
+    "control": {
+      "triple": [8, 0, 51],
+      "name": "Liquor Holster",
+      "status": "pass (find-control, forgepact-229-gold-inlaid-potion-live-1.md step 3)",
+      "key": "belts_liquor_holster",
+      "rarity": 7,
+      "hidden": "absent",
+      "angelic_keeps": true,
+      "ordinary_keeps": false,
+      "list_counts": {"0": 0, "1": 0, "2": 0, "3": 0, "4": 0, "5": 1}
+    },
+    "list_sizes": {"status": "measured (Live 1, forgepact-229-gold-inlaid-potion-live-1.md steps 3-4), the same as list_layout's", "sizes": {"0": 50, "1": 61, "2": 79, "3": 152, "4": 221, "5": 380}},
+    "entries": [
+      {
+        "triple": [18, 0, 8],
+        "name": "Gold Inlaid Mysterious Potion",
+        "kAngelicBases_label": "angelic",
+        "repository": {"status": "measured (forgepact-229-gold-inlaid-potion-live-1.md step 4)", "key": "consumable_gold_inlaid_mysterious_potion", "rarity": 7, "hidden": "absent", "angelic_keeps": true, "ordinary_keeps": false},
+        "list_counts": {"status": "measured (forgepact-229-gold-inlaid-potion-live-1.md step 4)", "counts": {"0": 0, "1": 0, "2": 0, "3": 0, "4": 0, "5": 1}},
+        "vanilla_list": "listed: lootListUnique[5] carries it once and the Angelic roll's filters keep it, so the game's own roll can pick it; the game's roll placing a type-18 entry was not observed",
+        "forgepact_pool": {"status": "measured (forgepact-229-gold-inlaid-potion-live-1.md step 2)", "verdict": "ok", "pool": "48 candidates, 10 rejected"},
+        "built": {"status": "measured (forgepact-229-gold-inlaid-potion-live-1.md step 6)", "what": "angelicprobe pool drop 18 0 8 through SpawnAngelicItem with the local player as self: built at rarity 7, placed (Loot_Ground_obj count 8 -> 9); the built item's itemInfoStruct \"28\" reads the display name, not the key"},
+        "ground_label": {"status": "measured (forgepact-229-gold-inlaid-potion-live-1.md step 6)", "what": "\"Gold Inlaid Mysterious Potion | SS\" under the owner's loot filter, unchanged"},
+        "pickup": {"status": "measured (forgepact-229-gold-inlaid-potion-live-1.md step 7)", "what": "hover the label and F: \"[Gold Inlaid Mysterious Potion] Picked up\", into the bag grid (not the potion slots), tooltip Potion, 0 charges out of 1, flask cooldown 45 s, effect 15 s, tier SS"},
+        "use": {"status": "measured (forgepact-229-gold-inlaid-potion-live-1.md steps 8 and the retry after 9)", "what": "with 0 charges neither a right-click in the bag nor the potion-slot key drank it; after a reload it had 1 of 1 and the potion-slot key gave a 15 s Endless Wealth buff (Magic Find +275%, extra gold from kills 26%), the flask staying in its slot"},
+        "persist": {"status": "measured (forgepact-229-gold-inlaid-potion-live-1.md step 9)", "what": "after Save & Exit and a reload of slot 14 the potion was in the potion slot it had been moved to, 1 charge out of 1"},
+        "slider": {"status": "measured (forgepact-229-gold-inlaid-potion-live-1.md step 10)", "what": "angelicdrop 1: rolls=24 drops=24 fails=0, pool 48 candidates; two of the 24 drops were the potion"}
+      },
+      {
+        "triple": [18, 0, 5],
+        "name": "Elixir of Unworldly Cognition",
+        "kAngelicBases_label": "unholy",
+        "repository": {"status": "measured (forgepact-229-gold-inlaid-potion-live-1.md step 4)", "key": "consumable_elixir_of_unworldly_cognition", "rarity": 9, "hidden": "absent", "angelic_keeps": false, "ordinary_keeps": false},
+        "list_counts": {"status": "measured (forgepact-229-gold-inlaid-potion-live-1.md step 4)", "counts": {"0": 0, "1": 0, "2": 0, "3": 0, "4": 0, "5": 1}},
+        "vanilla_list": "on lootListUnique[5] once, but its rarity 9 fails the Angelic roll's filter, so the roll re-picks past it",
+        "forgepact_pool": {"status": "measured (forgepact-229-gold-inlaid-potion-live-1.md step 2)", "verdict": "game makes it rarity 9 (refused)"},
+        "built": {"status": "not observed live", "what": "not dropped: not a pool candidate"}
+      }
+    ],
+    "not_observed": "the game's own Angelic roll placing a type-18 entry; any other kAngelicBases row through pool drop; a second difficulty or zone tier; co-op; whether the potion refills its charge over time or only on reload; whether the potion is the one droppable entry on lootListUnique[5] beyond ForgePact's old 47 candidates (consistent with the 48 now, not checked entry by entry)"
+  },
   "measurements": [
     {"id": "dll-hash", "kind": "validity", "status": "pass", "date": "2026-10-02", "source": "forgepact-74-angelic-list-injection-live-1.md", "what": "The installed DLL is the research build under test: lease dll_sha256 f7560e804472fee6b9c7b61457e1c3b1713ba09a2bd5ec15226ffa5874d5be71 (hashed), equal to the workorder's research dll; slot 14, plugin v2.1.0 ready."},
     {"id": "marker", "kind": "validity", "status": "pass", "date": "2026-10-02", "source": "forgepact-74-angelic-list-injection-live-1.md", "what": "angelicprobe hit status on a fresh session: chance off, rate off, detection not installed (CreateDefaultParams, DropItemAngelicChance, GetUniqueRepoStruct not hooked), gameRolls=0 gameHits=0 cdpCalls=0 detect=off."},
