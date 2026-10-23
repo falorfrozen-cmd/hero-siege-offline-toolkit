@@ -3544,15 +3544,15 @@ with a hash manifest.
     - Research: [`ForgePact/docs/gamba-machine-research.md`](../../../ForgePact/docs/gamba-machine-research.md); tests: `tests/test_gamba_pity_contract.py`, `tests/test_gamba_pity_behavior.py` + `gamba_pity_harness.cpp`.
 
 53. **Loot announcements (`lootann`, #17, off by default, 2026-10-04) show ForgePact's own chat line with the item's name in its rarity's colour (#228), not the game's announcement, and count an item only when the game has just built it.**
-    - **The shipped route is `chatcolour` (ForgePact #228, 2026-10-23; `server` before it).** The line is `ChatAddMessage` by name, sender part `<character> found` in the game's grey chat text 11974842 (#BAB8B6) and text part the item name in the online announcement's colour for its rarity (Heroic 9764608 #00FF94, Angelic 10681599 #FFFCA2, Unholy 7224024 #D83A6E), so it reads `[hh:mm] Sorak found : Headhunter` with only the name coloured: not the game's own online text or sender (online, the finder's name is orange and the whole `found [item]` text takes the rarity colour; that layout is the documented alternative, research doc § Rarity colours (#228)). When the `chatcolour` call refuses, the mod logs `lootann: no line (sink chatcolour) - <field>; showing the red line (sink server) instead` (first 20) and shows the old red `SERVER: Sorak found Headhunter` line through `ChatAddServerMessage`; `sink-refused=` counts each such announcement, whether the red line then showed or not. An item name that is not text has no fallback. Until #228's live session the coloured line is harness- and contract-tested only, not observed live. The game's own path (the ground item's `anon@1138` closure, `method`) was never seen to run offline, and the probe could not name any `anon@` method on the ground item in two sessions (Live procedure 3: each index read as -1), so whether it can be invoked offline is not established. `netsend` and `chatadd` refused with the one item argument supplied.
-    - **What the coloured line rests on is a static reading, not a measurement** (#228, `docs/RUNTIME_DATA_MODELS.md` § 8.6). That a chat line carries exactly two text colours (the sender's and the text's) and no colour markup inside the text, and that a sender colour of exactly 6776816 (#F06767) turns the text grey, come from reading `ChatAddMessage` and `DrawChatMessage` locally; that the bottom-left feed draws through `DrawChatMessage` is an inference. The feed shows a channel-0 line only while the game's `enableGeneralChat` option is on (static reading; the red `server` line used channel 0 too, so this is not new). What a click on the sender name does in the opened chat window offline (the draw code has a menu over the name) is not established. The separator's exact characters on a type-0 line are not established either.
+    - **The shipped route is `chatcolour` (ForgePact #228, 2026-10-23; `server` before it).** The line is `ChatAddMessage` by name, sender part `<character> found` in the game's grey chat text 11974842 (#BAB8B6) and text part the item name in the online announcement's colour for its rarity (Heroic 9764608 #00FF94, Angelic 10681599 #FFFCA2, Unholy 7224024 #D83A6E), so it reads `[hh:mm] Sorak found : Headhunter` with only the name coloured: not the game's own online text or sender (online, the finder's name is orange and the whole `found [item]` text takes the rarity colour; that layout is the documented alternative, research doc § Rarity colours (#228)). When the `chatcolour` call refuses, the mod logs `lootann: no line (sink chatcolour) - <field>; showing the red line (sink server) instead` (first 20) and shows the old red `SERVER: Sorak found Headhunter` line through `ChatAddServerMessage`; `sink-refused=` counts each such announcement, whether the red line then showed or not. Two refusals come before any call and have no fallback, since the red line needs the same thing: an item name that is not text, and no local player; each counts `sink-refused=`. A call that dispatches but adds no line to the bottom-left feed (for example with the game's `enableGeneralChat` option off) gets no fallback and no count, as with the `server` route before it. **Measured live** 2026-10-23 (capture `forgepact-228-loot-colors-live-1`, § Loot announcements' "Verified live 2026-10-23, the item name in its rarity's colour"): a placed Heroic, Angelic and Unholy item each showed `Sorak found: <item name>` with no `SERVER:`, `Sorak found` in grey (186,184,182) and the item name in exactly the colour passed (green (0,255,148), pale yellow (255,252,162), crimson (216,58,110)), `sink-refused=0`; `segment-route: two-colours`. **Not observed live:** the fallback to the red line (no call refused in the session; harness and contract only), natural drops on the coloured route, co-op. The game's own path (the ground item's `anon@1138` closure, `method`) was never seen to run offline, and the probe could not name any `anon@` method on the ground item in two sessions (Live procedure 3: each index read as -1), so whether it can be invoked offline is not established. `netsend` and `chatadd` refused with the one item argument supplied.
+    - **Part of what the coloured line rests on is still a static reading** (#228, `docs/RUNTIME_DATA_MODELS.md` § 8.6). That the sender part and the text part each carry their own colour on the bottom-left feed is measured (Live 1, above). That no colour markup inside the text can change it, and that a sender colour of exactly 6776816 (#F06767) turns the text grey, come from reading `ChatAddMessage` and `DrawChatMessage` locally and were not exercised; that the bottom-left feed draws through `DrawChatMessage` is an inference. The feed shows a channel-0 line only while the game's `enableGeneralChat` option is on (static reading; the red `server` line used channel 0 too, so this is not new). What a click on the sender name does in the opened chat window offline (the draw code has a menu over the name) is not established. The separator's exact characters on a type-0 line are not established either.
     - **Bag drops and re-drops are held by the creation guard, measured once.** A ground item counts only when its item struct was noted from `CreateItemNew` in that frame or the one before. Live procedure 3 (2026-10-04) measured one bag drop of one item held (`held-bag-drop` +1, no line) and 215 natural drops passing. Several items dropped at once, a stack, and a drop in the frame of a pickup were not tried. The guard would announce a bag drop again if the game ever put a copy built through `CreateItemNew` on the ground; the struct that reaches the ground is not established (`docs/RUNTIME_DATA_MODELS.md` § 16.11).
     - **A Chaos Tower floor's drops are announced when the floor's end lands them, not at the kill (ForgePact #227; verified live 2026-10-23, capture `forgepact-227-chaos-tower-announce-live-1`).** The owner reported no line for drops in the Chaos Tower. Read statically (`docs/RUNTIME_DATA_MODELS.md` § 16.14): on a tower floor `LootGroundInit` takes each new ground item off the floor and keeps its item struct in `Controller_obj.lootExplosionList`, and `LootExplosion`, at the floor's end, puts the same structs back on the ground with no `CreateItemNew`, so the creation guard alone held every tower drop as `held-bag-drop`. The fix reads that list by name once per frame (after the frame's decisions, before the creation window ages) and keeps an entry's key only when its struct was built in that frame or the one before; when the burst lands it, the guard passes it (`burst-landed=` +1) and the usual rarity and once-per-item rules apply. A bag drop on a floor is collected too, but its struct was not just built, so it is not kept and stays held. A shorter or different list, or none, forgets every kept key. No hook, no address, no write. Should a patch rename `lootExplosionList` or `itemInstance`, the reader goes blind and tower drops are held again, with `burst-listed=` staying 0 on a floor; `burst-list=none(...)` (a renamed list) or a rising `burst-nokey=` (a renamed entry field) tells that apart from a session that never finished a floor. **Measured live** (2026-10-23, capture `forgepact-227-chaos-tower-announce-live-1`, one first floor): the list filled with the floor's drops (`burst-listed=` and `burst-fresh=` rising together with natural drops), the floor's end emptied it and landed them (`burst-landed=12`), a placed Heroic item with the list memory on was decided `announce via=burst` and the owner saw its red line, and one placed with the memory off (the rule before the fix) was decided `held-bag-drop` and the owner saw no line for it. The burst initialised each landed item twice (two decide lines per stamp); the identity memory held the second as `held-duplicate`, so one line showed. **Not observed live:** a floor's drops leaving the ground at collection (not watched); a bag drop on a floor staying held (the session never dropped one); which two `LootGroundInit` calls ran for one item, and that `LootExplosion` ran at all (its debugger logpoint was not run); Angelic and Unholy in the tower; a floor left unfinished; what the protected value that also sends a drop to the list outside a `Chaos_Tower_` room means; the Wormhole (`WormholeGiveReward` also calls `LootExplosion`; the reader covers it without a test); and the tower's reward room. Record: `ForgePact/docs/loot-announcement-research.md` § Chaos Tower (#227).
     - **A co-op peer's dropped item is announced only if its build on this client goes through `CreateItemNew`.** A static reading of `CA_playerItemDrop` says it is built anew here, but whether that build goes through `CreateItemNew` is not established; if it does not, the creation guard holds it as `held-bag-drop` and no line appears. Not measured: no co-op session has been run (`docs/RUNTIME_DATA_MODELS.md` § 16.11).
     - **The guard reads nothing new unless `create-hook=both`.** `LootGroundCreate` calls `CreateItemNew` directly, which a table-only hook never sees; with `create-hook=table-only` or `none` the game's own drops are held as not recently created and nothing is announced. `lootann 1` says so in one line. If another feature installed `CreateItemNew` first, its route is the one reported.
     - **A switch on at launch arms, and hooks once a character exists (2026-10-08).** Every live session switched the mod on in game; the way a player uses it, the switch already on as the game starts, was never measured, and until this change its `lootann 1` launch command installed `LootGroundInit` and `CreateItemNew` at character select, the hazard of item 8. The hooks now go in once per session on the first frame where setup is done and `HhResolveLocalPlayer` resolves the player, looked for every 60 frames while armed; `install=not-armed|waiting-for-character|installed` on `lootann 1` and `lootann stat` says which. Measured 2026-10-08 (capture `forgepact-moveall-loot-satanic-live-1`, § Loot announcements' "Verified live 2026-10-08"): `lootann 1` at character select read `install=waiting-for-character create-hook=not-installed` then and 3 s later, the hooks read `init-hook=both create-hook=both install=installed` 5 s after the character loaded, and a placed Heroic item was announced. The owner's report that the mod "doesnt work" (2026-10-08) was not captured, and the build before the change was not run, so that this was its cause is not established. A failed install is still tried once and not retried, and there is no fallback pass like hidden loot's (a pass cannot tell a fresh drop from a bag drop without the creation guard).
     - **Heroic, Angelic and Unholy only; Satanic and Mythic were added and reverted (2026-10-08).** The owner had Satanic and Mythic added to `kAnnouncedRarities` and reversed it the same day, during the live session ("mythics and satanics shouldnt show. my mistake"), before it shipped. The set is rarities 9, 7 and 10 again, and every other code, Satanic and Mythic included, is held as `held-rarity`. Record: `ForgePact/docs/loot-announcement-research.md` § Satanic and Mythic: added and reverted.
-    - **Not observed live:** which rarity the one natural drop announced in Live procedure 3 had (the line was seen by the owner, the item was not recorded); an Unholy item (it shares the Angelic path in the core and is pinned by the harness); a Satanic or Mythic item held on the reverted set (a placed Satanic item was held on the same three-rarity gate on 2026-10-04, Live procedure 3; the 2026-10-08 session ran the build that announced both, before the revert); the switch on through the panel's own launch commands (the 2026-10-08 session sent `lootann 1` at character select); co-op; a filter-hidden drop of these rarities (decided before hidden loot sleep puts it to sleep, so it is announced).
+    - **Not observed live:** which rarity the one natural drop announced in Live procedure 3 had (the line was seen by the owner, the item was not recorded); an Unholy item before #228 (on the red route; #228's Live 1 announced a placed Unholy item on the coloured route); a Mythic item held on the reverted set (the 2026-10-08 session ran the build that announced Satanic and Mythic, before the revert; a placed Satanic item was held on the shipped three-rarity set in #228's Live 1, 2026-10-23, as on the same gate on 2026-10-04, Live procedure 3); the switch on through the panel's own launch commands (the 2026-10-08 session sent `lootann 1` at character select); co-op; a filter-hidden drop of these rarities (decided before hidden loot sleep puts it to sleep, so it is announced).
     - **Tests:** `tests/test_loot_announce_behavior.py` + `loot_announce_harness.cpp`, `tests/test_loot_announce_contract.py`, `tests/test_loot_announce_panel_contract.py`. Research: [`ForgePact/docs/loot-announcement-research.md`](../../../ForgePact/docs/loot-announcement-research.md).
 54. **The modified `AurieCore.dll` (ForgePact #151, notes 2.2.0) shortens the hook freeze; it keeps upstream's other freeze hazards, none of them observed:**
     - **What changed.** While `MmCreateHook` (and the other hook and unhook calls) writes a detour, Aurie suspends every other thread of the game. Upstream v2.0.2 found those threads by taking two snapshots of every thread on the system, about 69 ms per install in Live 1 of the setup-stall research (`ForgePact/docs/setup-stall-research.md`); the hub's `third_party/aurie/` series (`hs.1`, patch 0002) walks only the game's own threads, repeats the walk until no new thread appears, waits for each suspension to take effect and resumes exactly the threads it suspended. That also fixes upstream's single pass missing a thread created during it, starting early a thread created suspended inside the window, and resuming a thread it never suspended. The plugin, `MmCreateHook`'s signature and every call site are unchanged: hooks still attach through the table swap plus the inline detour. When the per-process walk cannot be done (`NtGetNextThread` missing, more than 1024 threads, an error before the end of the list), that call runs upstream's walk unchanged, and the first such call logs `[hs] MmCreateHook freeze: FELL BACK to the system-wide thread snapshot: <reason>` to `aurie.log`.
@@ -5744,7 +5744,8 @@ retested the game's path and left that choice standing. Issue #228 (2026-10-23)
 asked for the item's name in its rarity's colour, as online: the shipped sink
 is now `chatcolour` (`route=chatcolour`), a `ChatAddMessage` line whose item
 name alone takes the colour, with the red `server` line kept as its fallback
-(§ Rarity colours (#228) in the research doc).
+(§ Rarity colours (#228) in the research doc; verified live 2026-10-23,
+below).
 
 **Shape.** `plugin/include/ForgePact/LootAnnounceMod.hpp`
 (`ForgePact::LootAnnounceMod`, game-independent) plus an adapter in
@@ -5902,9 +5903,14 @@ build adds `lootannprobe` (Command Reference). Record:
   `ChatAddServerMessage` by name, `<character> found <item name>` from the
   core's `ServerText()`, the red `SERVER:` line measured in the sessions
   below. `sink-refused=` counts every announcement the shipped sink refused,
-  whether the red line then showed or not. An item name that is not text
-  refuses before any call, with no fallback, since the red line needs it
-  too. The other three bodies (`method`, `netsend`, `chatadd`) exist in both
+  whether the red line then showed or not. Two refusals come before any
+  call and have no fallback, since the red line needs the same thing: an
+  item name (`"28"`) that is not text, and no local player
+  (`LaPlayer` refusing); each logs its one line and counts `sink-refused=`.
+  A call that dispatches but adds no line to the bottom-left feed (for
+  example with the game's `enableGeneralChat` option off, below) is a
+  success to the mod: no fallback and no count, as with the `server` route
+  before it. The other three bodies (`method`, `netsend`, `chatadd`) exist in both
   builds for the probe and are never run by the player build.
   `kShippedSink`, `tests/test_loot_announce_contract.py`'s
   `EXPECTED_ROUTE` and the research doc's `announce-route:` line must agree;
@@ -5914,8 +5920,11 @@ build adds `lootannprobe` (Command Reference). Record:
   sender="<sender>" body="<text>" sender-colour=<n> body-colour=<n>
   dispatched=<0|1>`, at most 100 per session, which the live session reads
   beside its screenshots; and `lootannprobe place` sets the placed item's
-  tier (info `"32"`, `docs/RUNTIME_DATA_MODELS.md` § 16.3) to 5 (SS) so the
-  owner's loot filter shows it (#227's one copy of that write).
+  tier (info `"32"`, `docs/RUNTIME_DATA_MODELS.md` § 16.3) to 5 (SS), meant
+  to make the owner's loot filter show it (#227's one copy of that write).
+  The placed items' ground labels did show under the owner's filter in
+  #227's and #228's Live 1, but that the filter reads a `"32"` set this way
+  is not established.
 - *The bottom-left feed depends on a game option* (static reading, not
   measured): `ChatAddMessage` adds a channel-0 line to the in-game feed only
   while the game's `enableGeneralChat` option is on (a channel -1 line
@@ -5999,18 +6008,50 @@ unfinished, and co-op. Record: `ForgePact/docs/loot-announcement-research.md`
 § Chaos Tower (#227); the game facts are in `docs/RUNTIME_DATA_MODELS.md`
 § 16.14.
 
+**Verified live 2026-10-23, the item name in its rarity's colour** (capture
+`forgepact-228-loot-colors-live-1`, the toolkit workorder
+`forgepact-228-loot-colors`'s Live procedure 1, the research doc's § Rarity
+colours (#228), Live session; research build `BloodPactPlugin_rel.dll` from
+`build.bat dev` at ForgePact `9fcb9fd`, SHA-256 `e053249d…0d77151`, equal
+to the installed DLL's; slot 14 "Sorak", Town of Inoya): `ping` answered
+`pong (YYTK 4.0.1)` and `lootann stat` began `lootann: off
+route=chatcolour`; `lootann 1` answered `route=chatcolour init-hook=both
+create-hook=both install=installed`. The feed control, `lootannprobe say
+control`, showed a red `[21:58] SERVER: control` at once, so the feed was
+showing channel-0 lines. A placed Heroic item (`"27"`=9, `"32"`=5) was
+decided `announce via=recent`, `out.txt` printed `lootann line:
+sink=chatcolour sender="Sorak found" body="Cavebat Heavy Belt"
+sender-colour=11974842 body-colour=9764608 dispatched=1`, `announced` went
+0 to 1 with `sink-refused=0`, and a screenshot taken at once showed `Sorak
+found: Cavebat Heavy Belt` with no `SERVER:`, the sender part grey
+(186,184,182) and the item name green (0,255,148), each exactly the colour
+passed. A placed Angelic item (`Headhunter`, body-colour 10681599) showed
+its name pale yellow (255,252,162), plainly apart from the grey sender; a
+placed Unholy item (`Cobra Heavy Belt`, body-colour 7224024) showed it
+crimson (216,58,110); `announced` reached 3, `sink-refused` stayed 0. On
+all three lines the sender part was grey and only the item name coloured:
+`segment-route: two-colours`. Each placed item's ground label had the same
+hue as its chat name, darker (about 0.85 of the chat value). A placed
+Satanic item raised `held-rarity` 0 to 1 with no decide line and no chat
+line; with `lootann 0` a placed Heroic item left every count unchanged and
+showed no line. The game exited with code 0 and the session's save backup
+was restored. Not run, and so not observed live: the red fallback (no call
+refused; harness and contract only), natural drops on the coloured route,
+and co-op. Record: `ForgePact/docs/loot-announcement-research.md` § Rarity
+colours (#228); the game facts are in `docs/RUNTIME_DATA_MODELS.md` § 8.6.
+
 **Not known.** Whether the game's own announcement closure is bound on an
 offline ground item, and what `method_get_index`'s -1 for its `anon@`
 methods means; which rarity the naturally announced drop had; which script
 the bag drop runs through and whether the struct it puts on the ground is the
 one picked up or a copy; several items dropped at once; co-op (a peer's drop
 is built anew on this client, but whether through `CreateItemNew`, and so
-whether it is announced or held as `held-bag-drop`, is not established); Unholy live.
+whether it is announced or held as `held-bag-drop`, is not established).
 Whether the switch on at launch failed before the arming change (only the
 build with the change was run); the switch on through the panel's own launch
-commands rather than `lootann 1` sent at character select; a Satanic or
-Mythic item held on the shipped three-rarity set (Satanic held was measured
-on the same gate on 2026-10-04; Mythic held is harness-only). In the Chaos
+commands rather than `lootann 1` sent at character select; a Mythic item
+held on the shipped three-rarity set (harness-only; a placed Satanic item
+was held on it in #228's Live 1, 2026-10-23). In the Chaos
 Tower's loot burst (#227, verified live 2026-10-23 above): a bag drop on a
 floor staying held, which two `LootGroundInit` calls initialise one item at
 the burst and that `LootExplosion` is the routine behind it, what the

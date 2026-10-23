@@ -2053,7 +2053,7 @@ mostly screens that block play; `Enemy_Aggroable_obj` is the parent of exactly
   player as `self` and two arguments (a reference and a bool). **Measured**
   (count-only hooks on both, same session). `ChatAddMessage` called directly
   with another sender does show a line without the `SERVER:` prefix:
-  **measured** in the dungeon chest's Live procedure 1b (shape 8, next
+  **measured** in the dungeon chest's Live procedure 1b (shape 8; see
   this section's last bullet).
 - **How `ChatAddMessage` builds a line** (ForgePact#228). **Static reading**
   (2026-10-23, local Ghidra project, our own words). Its fifteen parameters,
@@ -2083,10 +2083,21 @@ mostly screens that block play; `Enemy_Aggroable_obj` is the parent of exactly
   `msgNameColor` is exactly 6776816 (#F06767) the text is drawn in the
   default grey instead. Nothing in the text can change its colour, so a line
   carries exactly two text colours: one for the sender part, one for the
-  text part. **Not established**: that the bottom-left feed draws through
-  `DrawChatMessage` (inference: the measured feed lines show a stamp and a
-  sender), the separator's exact characters for message type 0, and what a
-  click on a sender name in the opened chat window does offline.
+  text part. **Measured** 2026-10-23 (capture
+  `forgepact-228-loot-colors-live-1`, ForgePact#228's Live 1, research
+  build, slot 14 "Sorak", Town of Inoya; pixels sampled on full-resolution
+  screenshots of the bottom-left feed): three `ChatAddMessage` lines, each
+  with sender colour 11974842 and a different text colour, drew the sender
+  part in (186,184,182), which is 11974842 (#BAB8B6) exactly, and the text
+  part in exactly the text colour passed (details in this section's last
+  bullet), so on the feed the sender and the text each carry their own
+  colour. That nothing inside the text can change its colour and the
+  6776816 rule stay a static reading (neither was exercised). **Not
+  established**: that the bottom-left feed draws through `DrawChatMessage`
+  (inference: the measured feed lines show a stamp, a sender and a text in
+  the two colours the reading gives), the separator's exact characters for
+  message type 0 and its colour (not sampled), and what a click on a sender
+  name in the opened chat window does offline.
 - **`ChatAddServerMessage(text, channel)` cannot carry a colour.** **Static
   reading** (ForgePact#228): it passes the sender (measured `"SERVER"`), red
   255 (#FF0000) as both the sender and the text colour, message type 1 and the
@@ -2161,8 +2172,24 @@ mostly screens that block play; `Enemy_Aggroable_obj` is the parent of exactly
   (`chatcolour`): sender part `<character> found` and text part the item name,
   the sender in the grey 11974842 and the item name in the online
   announcement's colour for its rarity (9764608, 10681599 or 7224024), with
-  the red `SERVER:` line as its fallback. The colours a player sees are
-  **not established** until that workorder's live session.
+  the red `SERVER:` line as its fallback. **Measured** 2026-10-23 (capture
+  `forgepact-228-loot-colors-live-1`, ForgePact#228's Live 1; research
+  build sha256 `e053249d…0d77151`, slot 14 "Sorak", Town of Inoya): with
+  `self` the local `Player_obj`, sender `"Sorak found"`, sender colour
+  11974842 as a real, the item name as the text and its rarity's colour as
+  a real, type and channel int64 0, a placed Heroic, Angelic and Unholy
+  item each showed `[hh:mm] Sorak found: <item name>` on the feed with no
+  `SERVER:` prefix. Pixels on the full-resolution screenshot: the sender
+  part (186,184,182) on all three lines; the item name (0,255,148) for
+  Heroic (9764608, #00FF94), (255,252,162) for Angelic (10681599, #FFFCA2,
+  pale yellow, plainly apart from the grey) and (216,58,110) for Unholy
+  (7224024, #D83A6E), each exactly the colour passed. The same placed
+  items' ground labels showed the same hue, darker (about 0.85 of the chat
+  value per channel: (0,217,126), (216,217,130), (184,49,94)). A placed
+  Satanic item and a Heroic item placed with the switch off showed no line.
+  **Not observed live**: the fallback to the red line (no call refused),
+  natural drops on this route, co-op, the time stamp's and the separator's
+  colours.
 
 [dungeon chest, Chat route](../ForgePact/docs/dungeon-chest-research.md#chat-route),
 [loot announcements, Static reading](../ForgePact/docs/loot-announcement-research.md#static-reading),
