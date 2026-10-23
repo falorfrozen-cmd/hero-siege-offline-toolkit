@@ -1654,13 +1654,79 @@ HUD's methods; one headless slot-reference scan (`FindSlotRefSites.java`) of
     read, which drifted between 54 and 106 over the session); the shape
     base / (1 + FCR / 100) holds only that loosely.
   [Mark 1 Stats live 1 results](../ForgePact/docs/mark1-set-research.md#stats-live-1-results)
+- **Static reading (2026-10-23): the player's mana regen tick.** From the
+  ghidra MCP's decompiles of `playerUpdateTimerMana`, `PlayerRegenSet`,
+  `SetRoomSpeed` and `stepMercenaryTimers`, a headless decompile of
+  `PlayerUpdateTimers` and `Timer_obj`'s Step, local byte scans (positive
+  controls: id 64's askers as § 7.8 lists them, and `CheckTalentUse` called
+  from `PlayerMovement`) and a names-only trace of `Player_obj`'s Step; in
+  our own words:
+  - **The regen is `playerUpdateTimerMana`**, called once, directly, from
+    `Player_obj`'s Step (the only direct caller found). `PlayerUpdateTimers`
+    does not regenerate: its one `PlayerManaUpdate` call is the clamp that
+    puts current mana back to the maximum. For the local player only, the
+    tick reads two `pSt` entries as gates (their meaning not read),
+    compares current mana (`pSt` 18) with the maximum (17) and, while mana
+    is below it, asks the dispatcher for id 42, divides the answer by the
+    tick's second argument, rounds the quotient up and adds the result
+    through `PlayerManaUpdate`. Life works the same way in
+    `playerUpdateTimerLife` with id 38. The tick loads 42 as a plain integer
+    constant, which the earlier constant-id scan (address-loaded constants
+    only) could not see; that scan's "only `stepMercenaryTimers` asks 42"
+    was a scan blindness, not an absence.
+  - **What the Step passes is not established.** Just before each tick
+    call it reads a `pSt` entry, asks the dispatcher for id 44 (mana) or 41
+    (life), neither of which has a case in the dispatcher's table, and reads
+    `game_get_speed` twice; how those become the tick's timing and divisor
+    was not read (a long decompile of the Step did not finish).
+  - **The mercenary's version**, `stepMercenaryTimers`, counts a `pSt`
+    timer down by the mercenary's own `deltaFrame` each step, adds the
+    rounded-up answers to 38 and 42 when it runs out, and resets the timer
+    from `game_get_speed`. No `deltaFrame` slot appears in the player's
+    scripts.
+  - **The game's step rate.** `SetRoomSpeed` reads the video FPS option
+    (protected data entry 76) and sets `game_set_speed` to 60, 120 or 144
+    (options 0, 1, 2; 60 otherwise). GameMaker runs one step per drawn
+    frame, so the step rate is the frame rate, capped at that setting.
+    `Timer_obj`'s Step keeps a real-time factor, the frame's `delta_time`
+    over the target frame time, clamped to 0.9 .. 4.0 and stored in the
+    protected data (entry 294); the player's tick and `PlayerUpdateTimers`
+    were not seen to read it (not established: the Step itself was not
+    read).
+- **Measured, Stats live 3 (2026-10-23), from the in-process `vitals`
+  lines' `frame=` and `dt=`:** the game ran about 143 frames a second (S7
+  180 frames in 1258 ms, S8 180 in 1259 ms, S9 600 in 4173 ms), the 144
+  setting. The "about 78" once inferred from the debugger control's 777
+  `PlayerMovement` hits in 10 s is therefore not once a frame (or the
+  logpoints slowed the game; not established which).
+- **Inferred from those windows' measured gains:** each is a whole number
+  of ticks of the answer over ten, rounded up: S7 (answer 140) gained
+  154 = 11 × 14, S8 (answer 92.96) gained 110 = 11 × 10, S9 (answer −140)
+  lost 518 = 37 × 14. So the divisor is 10 and a tick came every 16.2 to
+  16.4 frames, about 8.7 to 8.9 ticks a second.
+- **The replenish readings side by side.** Read as mana a second per unit
+  of the whole answer, S7 gives 0.874 (§ 16.13). Read on the drain side,
+  S7 minus S8 gives 35.05 mana a second over 47.04 drained units, 0.745 a
+  drained unit, the value ForgePact's `kMark1ReplenishUnit` adopts. The two
+  disagree, and the inference is that the rounding up per tick, not the
+  unit, explains the gap: the drain took 14 − 10 = 4 whole mana a tick
+  where 4.70 was asked. At the shipped 0.745 (answer 140, maximum 2352, two
+  proc columns, 63.14 drained) each tick would take 14 − 8 = 6 mana, about
+  1.12% of maximum mana a second per skill (inferred; not measured). One
+  mana a tick is about 0.19% of that maximum a second per column, so the
+  drain moves in steps of that size.
+  [Regen and the frame rate](../ForgePact/docs/mark1-set-research.md#regen-and-the-frame-rate-static-reading)
 - **Not established:**
+  - whether the player's tick is counted in frames (a fixed count, or one
+    taken from `game_get_speed`) or timed by the clock, so whether the
+    regen, and Mark 1's drain with it, slows at a lower frame rate (Live
+    procedure 5 measures 144 against 60);
+  - the drain's measured share of maximum mana a second at the shipped
+    unit;
   - what the other three blends mean (plausibly mana, cooldown or stacks);
   - who else writes a button's `enabled`, and what else it changes besides
     the look (the tooltip and the left click were unchanged, measured
     above; navigation not read);
-  - the unit of id 42's answer, and whether a replenish below zero drains
-    mana or stops at zero;
   - whether id 43's part is a share of the mana pool;
   - a talent's base cast time, and its sub-talent bonus;
   - whether `GetTalentCooldown`'s base differs from `abilityCooldown` (sub
@@ -5585,7 +5651,10 @@ words; nothing here quotes the game's code.
   - **The replenish unit**: with id 42 at its own 140, mana rose 122.417 a
     second, 0.874 a second per unit (read in process; Stats live 2's HUD
     crops read 0.883). With 42 answered 92.96 it rose 87.37 a second, within
-    8% of that unit's prediction.
+    8% of that unit's prediction. Read on the drain side, the two windows'
+    difference (S7 minus S8) is 0.745 a second per drained unit, the value
+    ForgePact's `kMark1ReplenishUnit` adopts; the readings disagree, and
+    § 7.10 infers that the regen tick's rounding up explains it.
   - **A replenish below zero drains.** With 42 forced to −140 from 1428 of
     2352, mana fell 518 in 4.2 s, −124.131 a second: the game's regen
     applies a negative replenish, it does not stop at zero.
