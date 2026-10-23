@@ -1,12 +1,13 @@
 {
-  "status": "model: every expected value is computed by hs_game_sdk.mark1_automation_model from the inputs beside it; nothing here is measured yet. The interval's shape and the 0.25 s floor are static reading and measured (RDM 7.1, 7.5); the 1.0 s base cast time, the replenish unit 1.0, the 1500 maximum and the 30 baseline replenish are assumptions until Live 1 (cast-base, regen-units).",
+  "status": "model: every expected value is computed by hs_game_sdk.mark1_automation_model from the inputs beside it. The interval's shape and the 0.25 s floor are static reading and measured (RDM 7.1, 7.5). The replenish unit 0.874 (mana a second per unit of id 42's answer) is measured in process by Stats live 3's regen-units, and the drain divides by it, so each automated skill takes a true 1% of maximum mana a second; that per-second rate is the arithmetic's, not re-measured live. The unit-1 drain cases read the answer as mana a second (R - n x 1% x M), the unit-0.874 cases are the shipped arithmetic (R - n x 1% x M / 0.874). The 1.0 s base cast time, the 1500 maximum and the 30 baseline replenish are assumptions.",
   "source": "docs/models/mark1-automation-spec.md; hs-game-sdk/python/hs_game_sdk/mark1_automation_model.py; checked by tests/test_mark1_automation_model.py (hub) and by ForgePact's test_mark1_priority_behavior.py (interval, within 1 ms) and test_mark1_cost_behavior.py (drain, maxmana)",
   "units": {
     "ability_cooldown": "seconds",
     "base_cast_seconds": "seconds",
     "expected_ms": "milliseconds, rounded to 0.001",
     "percent": "% of maximum mana per second per automated skill",
-    "expected_drain": "replenish units (mana per second at unit 1)",
+    "unit": "mana per second one unit of id 42's answer is (0.874 measured, Stats live 3; 1 reads the answer as mana per second)",
+    "expected_drain": "id-42 units: percent of max_mana divided by unit (mana per second at unit 1)",
     "original": "the game's own answer for the dispatcher id (42 for drain, 37 for maxmana)",
     "cut_pct": "% of maximum mana per automated skill"
   },
@@ -186,6 +187,46 @@
       "original": 50,
       "expected_drain": 120000,
       "expected_answer": -100000
+    },
+    {
+      "label": "the shipped unit (0.874 mana a second per unit, Stats live 3): 1 automated skill at a true 1% of 1500 takes 15 / 0.874 units off 30",
+      "columns": 1,
+      "percent": 1,
+      "max_mana": 1500,
+      "unit": 0.874,
+      "original": 30,
+      "expected_drain": 17.162471395881006,
+      "expected_answer": 12.837528604118994
+    },
+    {
+      "label": "the shipped unit: 4 automated skills at a true 1% of 1500 take 60 / 0.874 units off 30",
+      "columns": 4,
+      "percent": 1,
+      "max_mana": 1500,
+      "unit": 0.874,
+      "original": 30,
+      "expected_drain": 68.64988558352402,
+      "expected_answer": -38.649885583524025
+    },
+    {
+      "label": "the shipped unit on Stats live 2's numbers: 2 automated skills, Sorak's 2352 mana and a replenish of 257",
+      "columns": 2,
+      "percent": 1,
+      "max_mana": 2352,
+      "unit": 0.874,
+      "original": 257,
+      "expected_drain": 53.82151029748284,
+      "expected_answer": 203.17848970251717
+    },
+    {
+      "label": "the shipped unit still stops at minus the maximum: 4 skills at a 25% override on 1000 from 0",
+      "columns": 4,
+      "percent": 25,
+      "max_mana": 1000,
+      "unit": 0.874,
+      "original": 0,
+      "expected_drain": 1144.1647597254005,
+      "expected_answer": -1000
     }
   ],
   "maxmana": [

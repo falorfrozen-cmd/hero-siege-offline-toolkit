@@ -45,7 +45,9 @@ def net(columns, *investments, percent=model.DRAIN_PCT_PER_SECOND, base=BASE):
     kwargs = {"replenish_pct": 0, "mana_per_second": 0, "mana_per_kill": 0, "kills_per_second": 0}
     for investment in investments:
         kwargs.update(investment)
-    drain = model.drain_per_second(columns, percent, MAX)
+    # In mana a second: the drain at unit 1, which the measured unit leaves
+    # the same once id 42's answer is divided by it.
+    drain = model.drain_per_second(columns, percent, MAX, unit=1)
     return model.net_mana_per_second(MAX, base, drain=drain, **kwargs)
 
 
@@ -109,8 +111,47 @@ class DrainTests(unittest.TestCase):
         self.assertTrue(model.is_sustained(net(0)))
         self.assertIsNone(model.seconds_to_empty(MAX, net(0)))
 
+    def test_drain_baseline_unit_one_is_mana_a_second(self):
+        # At unit 1 id 42's answer is mana a second: R - n x 1% x M.
+        self.assertEqual([model.replenish_answer(30, n, MAX, 1, 1) for n in range(5)],
+                         [30, 15, 0, -15, -30])
+        self.assertEqual(model.replenish_answer(0, 4, 1000, 100, 1), -1000)
+
+    def test_drain_target_scaled_by_the_measured_unit(self):
+        # Stats live 3's `regen-units`: one unit of id 42's answer is 0.874
+        # mana a second, so the answer divides by it.
+        self.assertEqual(model.REPLENISH_UNIT, Fraction(874, 1000))
+        unit = model.REPLENISH_UNIT
+        for n in (1, 4):
+            with self.subTest(columns=n):
+                expected = 30 - n * Fraction(1, 100) * MAX / unit
+                self.assertEqual(model.replenish_answer(30, n, MAX), expected)
+                self.assertEqual(model.drain_per_second(n, model.DRAIN_PCT_PER_SECOND, MAX),
+                                 n * Fraction(15) / unit)
+                # In mana a second, a true 1% of the maximum per skill.
+                self.assertEqual(model.drain_per_second(n, model.DRAIN_PCT_PER_SECOND, MAX) * unit, 15 * n)
+        self.assertAlmostEqual(float(model.replenish_answer(30, 1, MAX)), 30 - 15 / 0.874, places=9)
+        # Still clamped at minus the maximum.
+        self.assertEqual(model.replenish_answer(0, 4, 1000, 100), -1000)
+        self.assertEqual(model.replenish_answer(0, 4, MAX, percent=25), -MAX)
+
+    def test_drain_negative_control_unit_divides_not_multiplies(self):
+        unit = model.REPLENISH_UNIT
+        shipped = model.drain_per_second(1, model.DRAIN_PCT_PER_SECOND, MAX)
+        multiplied = model.drain_per_second(1, model.DRAIN_PCT_PER_SECOND, MAX, 1) * unit
+        self.assertGreater(shipped, 15)
+        self.assertNotEqual(shipped, multiplied)
+        # The unit leaves zero columns, and the cut, exactly as before.
+        self.assertEqual(model.drain_per_second(0, model.DRAIN_PCT_PER_SECOND, MAX), 0)
+        self.assertEqual(model.replenish_answer(30, 0, MAX), 30)
+        self.assertEqual([model.cut_max_mana(n, model.MAX_MANA_CUT_PCT, MAX) for n in range(5)],
+                         [1500, 1200, 900, 600, 300])
+        for bad in (0, -1):
+            with self.subTest(unit=bad), self.assertRaises(ValueError):
+                model.drain_per_second(1, 1, MAX, bad)
+
     def test_drain_target_one_sustainable_at_baseline(self):
-        self.assertEqual(model.drain_per_second(1, model.DRAIN_PCT_PER_SECOND, MAX), 15)
+        self.assertEqual(model.drain_per_second(1, model.DRAIN_PCT_PER_SECOND, MAX, unit=1), 15)
         self.assertEqual(net(1), 15)
         self.assertTrue(model.is_sustained(net(1)))
         # Two cost what the character regenerates.
@@ -118,7 +159,7 @@ class DrainTests(unittest.TestCase):
         self.assertTrue(model.is_sustained(net(2)))
 
     def test_drain_target_four_unsustainable_at_baseline(self):
-        self.assertEqual(model.drain_per_second(4, model.DRAIN_PCT_PER_SECOND, MAX), 60)
+        self.assertEqual(model.drain_per_second(4, model.DRAIN_PCT_PER_SECOND, MAX, unit=1), 60)
         self.assertEqual(net(4), -30)
         self.assertFalse(model.is_sustained(net(4)))
         self.assertEqual(model.seconds_to_empty(MAX, net(4)), 50)
@@ -140,7 +181,7 @@ class DrainTests(unittest.TestCase):
                 self.assertTrue(model.is_sustained(net(4, *pair)), net(4, *pair))
 
     def test_drain_answer_never_below_minus_max_mana(self):
-        self.assertEqual(model.replenish_answer(30, 4, MAX), -30)
+        self.assertEqual(model.replenish_answer(30, 4, MAX, unit=1), -30)
         self.assertEqual(model.replenish_answer(50, 4, 100000, percent=30), -100000)
         self.assertEqual(model.replenish_answer(0, 4, MAX, percent=25), -MAX)
 
@@ -227,6 +268,11 @@ class CasesTests(unittest.TestCase):
         at_one = [c for c in cases["drain"] if c["percent"] == 1 and c["max_mana"] == MAX]
         self.assertEqual({c["columns"] for c in at_one}, {0, 1, 2, 3, 4})
         self.assertTrue(any(c["expected_answer"] == -c["max_mana"] for c in cases["drain"]))
+        # The shipped unit, one column and four, so the C++ core is held to the
+        # scaled numbers too.
+        scaled = [c for c in cases["drain"] if Fraction(str(c["unit"])) == model.REPLENISH_UNIT
+                  and c["percent"] == 1 and c["max_mana"] == MAX]
+        self.assertTrue({1, 4} <= {c["columns"] for c in scaled}, scaled)
         self.assertEqual({c["columns"] for c in cases["maxmana"]}, {0, 1, 2, 3, 4})
         for key in ("interval", "drain", "maxmana"):
             for case in cases[key]:

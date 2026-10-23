@@ -10,10 +10,10 @@ to as well.
 - The proc route fires each automated skill at its own interval: its cooldown
   at the player's Skill Haste plus its cast time at the player's Faster Cast
   Rate. A skill with no cooldown fires at its cast time.
-- The free procs carry a mana cost. The planned one is a drain: the game's own
+- The free procs carry a mana cost. The shipped one is a drain: the game's own
   mana replenish answer, lowered by a share of maximum mana per automated
-  skill per second. The documented alternative cuts maximum mana by a share
-  per automated skill.
+  skill per second, divided by the measured replenish unit. The documented
+  alternative cuts maximum mana by a share per automated skill.
 
 The Skill Haste arithmetic is `skill_stat_model`'s, reused rather than
 restated. Every value is an exact `Fraction` or an int. Nothing here draws a
@@ -65,8 +65,12 @@ DRAIN_PCT_PER_SECOND = Fraction(1)
 #: number, proposal).
 MAX_MANA_CUT_PCT = 20
 #: How many mana per second one unit of the replenish answer (id 42) is.
-#: Assumption, 1 = mana per second; not established (Live 1 `regen-units`).
-REPLENISH_UNIT = Fraction(1)
+#: Measured: 0.874, in process, by Stats live 3's `regen-units` (122.417 mana a
+#: second at an answer of 140). The drain divides by it, so each automated
+#: skill takes a true DRAIN_PCT_PER_SECOND % of maximum mana a second (the
+#: owner's choice, 2026-10-23); that rate is this arithmetic's, not re-measured
+#: live. ForgePact's `kMark1ReplenishUnit` is the same.
+REPLENISH_UNIT = Fraction(874, 1000)
 
 # ---- Assumptions the reference table is built on (Live 1 `regen-units`) ----
 
@@ -123,20 +127,24 @@ def interval_ms(ability_cooldown: Number, haste: Number, fcr: Number,
 
 def drain_per_second(proc_columns: int, percent: Number, max_mana: Number,
                      unit: Number = REPLENISH_UNIT) -> Fraction:
-    """How much the drain takes off the replenish answer: `proc_columns`
-    automated skills, each `percent` % of `max_mana` a second, times `unit`."""
+    """How much the drain takes off the replenish answer, in units of that
+    answer: `proc_columns` automated skills, each `percent` % of `max_mana` a
+    second, divided by `unit` (the mana a second one unit is). Pass `unit=1`
+    for the drain in mana a second, which is the same whatever the unit."""
     columns = _non_negative_columns(proc_columns)
     if Fraction(max_mana) < 0:
         raise ValueError("maximum mana cannot be negative")
-    return columns * Fraction(percent) / 100 * Fraction(max_mana) * Fraction(unit)
+    if Fraction(unit) <= 0:
+        raise ValueError("a replenish unit must be a positive number of mana a second")
+    return columns * Fraction(percent) / 100 * Fraction(max_mana) / Fraction(unit)
 
 
 def replenish_answer(original: Number, proc_columns: int, max_mana: Number,
                      percent: Number = DRAIN_PCT_PER_SECOND,
                      unit: Number = REPLENISH_UNIT) -> Fraction:
     """The answer the set's consumer gives for id 42: the game's own answer
-    minus the drain, never below minus `max_mana`. With no proc column the
-    original is left alone."""
+    minus the drain (divided by `unit`), never below minus `max_mana`. With no
+    proc column the original is left alone."""
     if _non_negative_columns(proc_columns) == 0:
         return Fraction(original)
     lowered = Fraction(original) - drain_per_second(proc_columns, percent, max_mana, unit)
