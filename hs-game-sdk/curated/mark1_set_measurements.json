@@ -1,0 +1,1776 @@
+{
+  "$schema_note": "Live measurements for the Mark 1 set (ForgePact#166 phase 1, research only, Live 1, Live 2 and Live 3, all 2026-10-13): how a bar slot can be cast through the game's own gate without a key press, which input entry each of Q, E, R and Y uses, what a toggle does under that lever, what a cast does to the walk, which script moves the player on a walk and during a jump, where a x0.5 on walking speed and a x3 on the jump land, and which reading tells a walkable landing point from one past the walkable map's edge. Research build of ForgePact 2feb9b4 (DLL SHA-256 0557663379cfbb08d1a976896f1b79712eae72dff47138e8f38194c08b02b97f; the plugin/ tree is unchanged at the head of the 166-mark1-set branch), the `mark1probe` instrument (nine script rows through HookOneScript, its levers and its pos sampler) and x64dbg hardware logpoints (CheckTalentUse as the control; TalentUseSetSpeed, StatMovementSpeed and StatJumpPower as candidates); save slot 14, character Sorak (White Mage), in Town_01_rm, every shipped mod off. Live 3 (walkability only) ran on a rebuilt research DLL, ForgePact 61243b2 (SHA-256 8c47459b15dd0691336efd65e5c9ded6ebd1a46b23e578e9688f71d023ad516e), with the same character, room and starting save and no debugger. mod_live_1 is phase 2's first session (2026-10-19, the walk's speed curve, the cast penalty, the toggle's settle time, the piece bases and a generated zone's edge), on the research build of ForgePact 109c908 (SHA-256 a2f64cf3889a4333e03c4fb0667045799b5fcb05f91e535c9fc171ff154ea493) with twenty rows (nine scripts and eleven builtins); its decisions are the research doc's Phase 2 decision keys. mod_live_2 is phase 2's second session (2026-10-19, the built set with its switch on), on the research build of ForgePact c598b5b (SHA-256 0a44a9d06ecd3780f1b4b4117e3178b4115f1094531e7869f368017c36b76362); its checks are the research doc's Mod live 2 results, and its 0.325 is a consistency observation, not a verdict. mod_live_3 is phase 2's third session (2026-10-20, the turn rule and the half walk with Healing Zone alone), on the research build of ForgePact 506038b (SHA-256 96c6d215ac87ab5e614b908abc937a404664b3aec60214a24a44c3401781483e); its checks are the research doc's Mod live 3 results, and it measured the 0.325 (penalty-stack: stacks). The procedures, their checks and the argument are in ForgePact docs/mark1-set-research.md (Live procedure 1, Live procedure 2, Results with Live 3 results, Decision, Not established); the shared facts are docs/RUNTIME_DATA_MODELS.md sections 7.7, 7.8, 19.10 and 19.11; the session captures forgepact-166-mark1-set-live-1.md, -live-2.md and -live-3.md stay with the hub's workorder files and are not tracked. No model or generator reads this file: tests/test_sdk_all.py checks only that curated/ is tracked, and the #166 workorder's criterion 24 reads game_build, cast_route, slot_keys, cast_penalty, walk_mover, speed_lever, jump_mover, jump_lever and walkable. A status is one of: measured, not-observed (the check ran, its control passed, and it saw nothing), not-run (the check did not run, or its control failed, so it says nothing) or static reading (read locally from the game, never measured). The decision value is the research doc's Decision key as recorded; each entry's checks carry their tools/live_checks.py verdicts. Addresses and call-site offsets are never recorded here; the callers are named. Static readings are our own words, never the game's text.",
+  "game_build": {
+    "status": "measured",
+    "exe_sha256": "498d588550d80d0d100a4ce6958bcc044e6b79339920d3d8a931bca9a1b142c0",
+    "what": "The game build both sessions ran on: `py -3 tools/decomp_index.py build-hash` printed this value before each launch, the SHA-256 of the copy the Ghidra project imported, so the logpoints and the caller names below belong to this build. Plugin v2.2.1 banner, YYTK 4.0.1.",
+    "research_dll_sha256": "0557663379cfbb08d1a976896f1b79712eae72dff47138e8f38194c08b02b97f",
+    "forgepact_commit": "2feb9b4",
+    "date": "2026-10-13"
+  },
+  "live_1": {
+    "status": "measured",
+    "date": "2026-10-13",
+    "procedure": "Live procedure 1 (the cast, the slot keys, the toggle and the cast's movement penalty)",
+    "summary": "20 checks: 15 pass, 0 fail, 3 not-observed, 2 not-run",
+    "checks": {
+      "dll-hash": "pass",
+      "marker": "pass",
+      "control": "pass",
+      "hook-native": "pass",
+      "dbg-control": "pass",
+      "bar-read": "pass",
+      "key-cast-control": "pass",
+      "ctu-args": "not-observed",
+      "slot-keys": "pass",
+      "queue-observed": "pass",
+      "cast-input": "pass",
+      "cast-gate": "not-observed",
+      "cast-other": "not-run",
+      "toggle-flips": "pass",
+      "empty-slot": "pass",
+      "walk-control": "pass",
+      "penalty-baseline": "pass",
+      "dbg-cast-speed": "pass",
+      "penalty-vars": "not-observed",
+      "penalty-lever": "not-run"
+    },
+    "source": "ForgePact docs/mark1-set-research.md (Live 1 results); forgepact-166-mark1-set-live-1.md, not tracked"
+  },
+  "live_2": {
+    "status": "measured",
+    "date": "2026-10-13",
+    "procedure": "Live procedure 2 (walking speed, the jump and walkability)",
+    "summary": "19 checks: 13 pass, 1 fail, 1 not-observed, 4 not-run",
+    "checks": {
+      "dll-hash": "pass",
+      "marker": "pass",
+      "control": "pass",
+      "hook-native": "pass",
+      "dbg-control": "pass",
+      "walk-control": "pass",
+      "walk-mover": "pass",
+      "dbg-stat-movement": "pass",
+      "speed-move": "not-run",
+      "speed-stat": "pass",
+      "jump-control": "pass",
+      "jump-mover": "pass",
+      "dbg-stat-jump": "not-observed",
+      "jump-vars": "not-run",
+      "jump-move": "pass",
+      "jump-stat": "pass",
+      "walkable-control": "fail",
+      "walkable-prop": "not-run",
+      "walkable-edge": "not-run"
+    },
+    "source": "ForgePact docs/mark1-set-research.md (Live 2 results); forgepact-166-mark1-set-live-2.md, not tracked"
+  },
+  "live_3": {
+    "status": "measured",
+    "date": "2026-10-13",
+    "procedure": "Live procedure 3 (walkability only, after Live 2's walkable-control failed and the probe's place_meeting read was corrected)",
+    "research_dll_sha256": "8c47459b15dd0691336efd65e5c9ded6ebd1a46b23e578e9688f71d023ad516e",
+    "forgepact_commit": "61243b2",
+    "summary": "6 checks: 6 pass (walkable-prop and walkable-edge as research: recorded)",
+    "checks": {
+      "dll-hash": "pass",
+      "control": "pass",
+      "marker": "pass",
+      "walkable-control": "pass",
+      "walkable-prop": "pass",
+      "walkable-edge": "pass"
+    },
+    "source": "ForgePact docs/mark1-set-research.md (Live 3 results); forgepact-166-mark1-set-live-3.md, not tracked"
+  },
+  "mod_live_1": {
+    "status": "measured",
+    "date": "2026-10-19",
+    "procedure": "Phase 2's Mod live procedure 1 (the walk's speed curve, the cast penalty, the gate's mana, the toggle's settle time, the piece bases, a generated zone's edge and the debugger's walk callers), research build only, the set's switch never on",
+    "research_dll_sha256": "a2f64cf3889a4333e03c4fb0667045799b5fcb05f91e535c9fc171ff154ea493",
+    "forgepact_commit": "109c908",
+    "character": "save slot 14, Sorak (White Mage), Town_01_rm, then the Outskirts of Inoya (Act_01_01) for the zone checks; no flight charm, jumpscenery off",
+    "frame_ms": 6.94,
+    "summary": "23 checks: 19 pass, 3 fail (penalty-watch, penalty-lever, toggle-settle), 1 not-observed (cast-mana), 0 not-run; every part's control passed",
+    "checks": {
+      "dll-hash": "pass",
+      "control": "pass",
+      "marker": "pass",
+      "hook-native": "pass",
+      "walk-control": "pass",
+      "stat-trace": "pass",
+      "speed-sweep": "pass",
+      "speed-half": "pass",
+      "speed-builtin": "pass",
+      "speed-factor": "pass",
+      "penalty-control": "pass",
+      "penalty-stat": "pass",
+      "penalty-watch": "fail",
+      "penalty-lever": "fail",
+      "cast-mana": "not-observed",
+      "toggle-settle": "fail",
+      "base-control": "pass",
+      "base-check": "pass",
+      "zone-control": "pass",
+      "zone-edge": "pass",
+      "dbg-control": "pass",
+      "dbg-walk-movers": "pass",
+      "dbg-cast-active": "pass"
+    },
+    "decisions": {
+      "speed-route": "stat-model",
+      "speed-shape": "affine",
+      "penalty-route": "none",
+      "cast-mana": "not-observed",
+      "toggle-settle": 19,
+      "piece-bases": "0:7,1:0,2:0,4:0",
+      "zone-edge": "both"
+    },
+    "id64_answer": 151,
+    "control_step_px": 2.989,
+    "speed_sweep": [
+      {"mult": 1.5, "step_px": 3.632, "ratio": 1.215},
+      {"mult": 0.75, "step_px": 2.668, "ratio": 0.893},
+      {"mult": 0.5, "step_px": 2.346, "ratio": 0.785},
+      {"mult": 0.25, "step_px": 2.025, "ratio": 0.678},
+      {"mult": 0.0, "step_px": 1.703, "ratio": 0.570},
+      {"mult": -0.5, "step_px": 1.06, "ratio": 0.355}
+    ],
+    "speed_half": {"mult": -0.162, "step_px": 1.495, "ratio": 0.500},
+    "speed_fit": "ratio = 0.570 + 0.430 x mult over the six points, every point within 0.02%: the modal step is proportional to the id-64 answer plus about 200 (fitted 200.0), no cap reached up to an answer of 226.5, and negative answers slow the walk further",
+    "penalty": {
+      "flat_frames": 57,
+      "flat_ratio": 0.650,
+      "ramp_frames": 16,
+      "id64_answer_through_dip": 151,
+      "playerEffect_199": "1 to 0.65 on the cast frame, back to 1 over the 16 ramp frames (57 to 73 frames after the cast), frame for frame with the step",
+      "hold_playerEffect_199_at_1_during_PlayerMovement": "removed the ramp only; the 57 flat frames stayed at 0.650",
+      "pst_changes_after_cast": 0
+    },
+    "toggle_settle_frames": 19,
+    "toggle_second_press": "switched Soul Spurn off 20 frames after the press and back on 57 frames after it, with no further press from the probe",
+    "piece_bases": {"0": {"b": 7, "name": "Arcane Resisting Great Helm"}, "1": {"b": 0, "name": "Steel Armor of Vitality"}, "2": {"b": 0, "name": "Boots of Sorcerer"}, "4": {"b": 0, "name": "Heavy Gloves of Energy"}},
+    "debugger": "PlayerMoveSkill, PlayerMoveSkillFunc and CA_playerMove logged no hit over a walk and a walk with a cast, and CA_playerTalentActive none over a standing cast, while the CheckTalentUse control logged about once a frame in the same windows; no return location to name",
+    "source": "ForgePact docs/mark1-set-research.md (Phase 2: the mod, Mod live 1 results and Phase 2 decision); forgepact-166-mark1-set-mod-live-1.md, not tracked"
+  },
+  "mod_live_2": {
+    "status": "measured",
+    "date": "2026-10-19",
+    "procedure": "Phase 2's Mod live procedure 2 (the built set with its switch on: the pieces, their art, the full-set read, the automation, the half walk and the cast's slowdown on it, the jump and the teardown), research build, in two attempts; the second, after Amendment 11 (the worn read searches gear slots 0-9), is the one recorded",
+    "research_dll_sha256": "0a44a9d06ecd3780f1b4b4117e3178b4115f1094531e7869f368017c36b76362",
+    "forgepact_commit": "c598b5b",
+    "first_attempt": "an earlier research DLL (SHA-256 13abbd1efd1f927aa4d39f518b293de21d19bf442c4a78cc9e791b0ee9ff7857) stopped at equip-detect (fail): with all four pieces worn the set read partial(3) on seven reads, and the gloves off and on again left it there, because that build read the gloves only at slot 3; the walk, automation and jump checks were not run",
+    "character": "save slot 14, Sorak (White Mage), Town_01_rm, then the Outskirts of Inoya (Act_01_01) for zone-jump-edge; wearing the four Mark 1 pieces in place of his own helmet, body armour, boots and gloves; no flight charm, jumpscenery off",
+    "frame_ms": 6.94,
+    "bar": {"Q": {"column": 3, "talent": 239, "ability": "shadowBolt", "abilityCooldown": 0.25}, "E": {"column": 4, "talent": 252, "ability": "healingZone", "abilityCooldown": 14}, "R": {"column": 5, "talent": 245, "ability": "heavenlyFire", "abilityCooldown": 0.25}, "Y": {"column": 6, "talent": 0, "ability": "empty"}},
+    "summary": "32 checks: 26 pass, 1 fail (on-automation), 5 not-observed (art-fallback, on-speed, on-penalty, penalty-stack, jump-far), 0 not-run; the validity checks, spawn-control, equip-detect and walk-control passed",
+    "checks": {
+      "dll-hash": "pass",
+      "control": "pass",
+      "marker": "pass",
+      "fresh-off": "pass",
+      "art-default": "pass",
+      "arm-at-select": "pass",
+      "art-load": "pass",
+      "art-ground": "pass",
+      "art-fallback": "not-observed",
+      "spawn-control": "pass",
+      "art-bag": "pass",
+      "art-tooltip": "pass",
+      "equip-detect": "pass",
+      "art-equipped": "pass",
+      "walk-control": "pass",
+      "off-vanilla": "pass",
+      "on-automation": "fail",
+      "gate-kept": "pass",
+      "cooldown-recast": "pass",
+      "on-border": "pass",
+      "on-speed": "not-observed",
+      "on-penalty": "not-observed",
+      "penalty-stack": "not-observed",
+      "jump-learn": "pass",
+      "jump-near": "pass",
+      "jump-far": "not-observed",
+      "jump-backoff": "pass",
+      "jump-prop": "pass",
+      "jump-edge": "pass",
+      "zone-jump-edge": "pass",
+      "unequip-stops": "pass",
+      "bonus-off-restores": "pass"
+    },
+    "worn_slots": {"helmet": 0, "body": 1, "boots": 2, "gloves": 4},
+    "control_step_px": 2.385,
+    "control_step_px_own_gear_mod_live_1": 2.989,
+    "automation": {
+      "gate_calls": 1350,
+      "presses": {"Q": 1350, "E": 1350, "R": 1350, "Y": 0},
+      "casts": {"239": 20, "252": 1, "245": 0},
+      "failure_counts": "col-unreadable, orig-unreadable, write-failed and restore-failed 0/0/0/0, threw=0",
+      "finding": "with all three columns pressed inside every gate call, Heavenly Fire on R never cast while Shadow Bolt on Q cast about every 60 frames; the order in which the gate serves asking slots was not read"
+    },
+    "cooldown_recast": {
+      "window_frames": 3600,
+      "healing_zone_rises_at_frames": [61179, 61840, 62750, 63821, 64322],
+      "intervals_frames": [661, 910, 1071, 501],
+      "probe_casts_252": 4,
+      "abilityCooldown": 14,
+      "note": "abilityCooldown's unit is not established (14 s would be 2016 frames at 144 fps); five object rises against four counted casts were not reconciled"
+    },
+    "bonus_on_walk": {
+      "playerEffect_199": "0.65 on every watched frame, one-frame rises to 0.670833 at each automated Shadow Bolt cast about 60 frames apart; no frame read 1",
+      "mode_px": 0.775,
+      "ratio_to_control": 0.325,
+      "consistency_note": "0.325 equals 0.5 x 0.65 (the half walk times Mod live 1's flat slowdown factor): a consistency observation by arithmetic, not a check verdict and not a measurement that the slowdown stacks",
+      "watch_cap": "the watch effect reply hit its 400-line cap after about 126 of 240 frames in each window"
+    },
+    "jump": {
+      "max_px": 250.3,
+      "max_source": "cap",
+      "landings_px": {"cursor_300": 734.9, "cursor_110": 740.9, "cursor_510": 750.9},
+      "backed_off_px": 250.0,
+      "across_bounty_board_px": 718.9,
+      "vanilla_off_px": {"cursor_101": 96.9, "cursor_301": 250.3},
+      "refused": "the town's south edge from (912, 1974) (a vanilla 40.3 px) and the Outskirts' edge (a vanilla 125.1 px, inside the wall); the Outskirts loaded in a different layout from Mod live 1 and its edge was found again by the same signature, Invisible_Wall_obj on the family, then the grid alone blocked",
+      "view_room_px": [1280, 720],
+      "cursor_reach_px": {"horizontal": 645, "corner": 741},
+      "jump_far_900": "not run: no on-screen cursor is 900 px from the player, and none lies past 3M (751 px); recorded not observed and not re-run"
+    },
+    "art": {
+      "icons": "8/8",
+      "worn_body_slot": "draws the piece's \"11\" sprite, as the bag does",
+      "tooltip": "draws no item icon, text rows only",
+      "fallback": "not observed: every PNG is embedded"
+    },
+    "toggle_guard": "not observed live: Soul Spurn left the bar's cases for the session (owner, 2026-10-19)",
+    "source": "ForgePact docs/mark1-set-research.md (Phase 2: the mod, Mod live procedure 2 and Mod live 2 results); forgepact-166-mark1-set-mod-live-2.md, not tracked"
+  },
+  "mod_live_3": {
+    "status": "measured",
+    "date": "2026-10-20",
+    "procedure": "Phase 2's Mod live procedure 3 (the turn rule on Mod live 2's own bar, and the half walk with the cast's slowdown on it re-measured with Healing Zone alone on the bar), research build, one attempt, 09:37 to 09:50 UTC",
+    "research_dll_sha256": "96c6d215ac87ab5e614b908abc937a404664b3aec60214a24a44c3401781483e",
+    "forgepact_commit": "506038b",
+    "character": "save slot 14, Sorak (White Mage), Town_01_rm, from the save before Mod live 2, wearing the four Mark 1 pieces (spawned once by mark1probe spawn set) in place of his own helmet, body armour, boots and gloves; no flight charm, jumpscenery off",
+    "frame_ms": 6.93,
+    "bar": {
+      "part_a": {
+        "Q": {"column": 3, "talent": 0, "ability": "empty"},
+        "E": {"column": 4, "talent": 252, "ability": "healingZone"},
+        "R": {"column": 5, "talent": 0, "ability": "empty"},
+        "Y": {"column": 6, "talent": 0, "ability": "empty"}
+      },
+      "part_b": {
+        "Q": {"column": 3, "talent": 239, "ability": "shadowBolt"},
+        "E": {"column": 4, "talent": 252, "ability": "healingZone"},
+        "R": {"column": 5, "talent": 245, "ability": "heavenlyFire"},
+        "Y": {"column": 6, "talent": 0, "ability": "empty"}
+      },
+      "emptying_a_slot": "a left click on the bar slot opens the skill popup; a left click on the skill already bound to that slot (labelled with the slot's key) unbinds it; done by hs_input, no owner action"
+    },
+    "summary": "14 checks: 13 pass, 1 fail (landed-control, its zone-count clause only), 0 not-observed, 0 not-run; the validity checks, equip-detect, install, walk-control and cast-control passed",
+    "checks": {
+      "dll-hash": "pass",
+      "control": "pass",
+      "marker": "pass",
+      "equip-detect": "pass",
+      "install": "pass",
+      "walk-control": "pass",
+      "cast-control": "pass",
+      "landed-control": "fail",
+      "on-speed": "pass",
+      "on-penalty": "pass",
+      "penalty-stack": "pass",
+      "on-automation": "pass",
+      "turn-landed": "pass",
+      "cooldown-recast": "pass"
+    },
+    "decision": "penalty-stack: stacks",
+    "worn_slots": {"helmet": 0, "body": 1, "boots": 2, "gloves": 4},
+    "control_step_px": 2.385,
+    "healing_zone_alone": {
+      "gate_calls": 5760,
+      "presses": {"Q": 0, "E": 5760, "R": 0, "Y": 0},
+      "landed_column_4": 4,
+      "probe_casts_252": 4,
+      "yielded": "0/0/0/0",
+      "recast_interval_frames": [1575, 1575],
+      "zone_count": "one rise of White_Mage_Healing_Zone_obj's count went 0->2 in each of two windows while the probe counted one cast: one cast can leave two zone instances, so the instance count is at least the casts, not equal to them; landed-control failed on that clause alone and was taken off the required passes by the owner (2026-10-20)"
+    },
+    "turns": {
+      "gate_calls": 4590,
+      "patience_frames": 90,
+      "rest_frames": 288,
+      "presses": {"Q": 1772, "E": 993, "R": 1825, "Y": 0},
+      "casts": {"239": 31, "245": 30, "252": 3},
+      "landed": {"Q": 31, "E": 3, "R": 30, "Y": 0},
+      "skip_turn": {"Q": 2818, "E": 3597, "R": 2765, "Y": 0},
+      "yielded": {"Q": 0, "E": 11, "R": 0, "Y": 0},
+      "cast_calls": 64,
+      "failure_counts": "col-unreadable, orig-unreadable, write-failed and restore-failed 0/0/0/0, threw=0",
+      "positive_control": "with the switch off, one key cast of Q and one of R counted casts=239:1,245:1: Heavenly Fire casts by key on this character in town",
+      "finding": "pressing one column a call, to the one whose last landed cast was longest ago, cast all three skills; the set's landings matched the probe's casts per talent exactly and cast-calls rose by their sum; which of several pressed slots the gate serves is still not read"
+    },
+    "cooldown_recast": {
+      "window_frames": 3600,
+      "healing_zone_rises_at_frames": [94269, 95333, 95920, 97547],
+      "intervals_frames": [1064, 587, 1627],
+      "probe_casts_252": 3,
+      "note": "four rises against three casts; the extra instance at 95333 lasted 88 frames"
+    },
+    "half_walk": {
+      "bonus_off_mode_px": 2.385,
+      "bonus_on_mode_px": 1.192,
+      "watched_frames_at_1": 103,
+      "ratio": 0.4998
+    },
+    "cast_on_half_walk": {
+      "pre_cast_mode_px": 1.192,
+      "pre_cast_watched_frames_at_1": 86,
+      "cast_step_px": 0.775,
+      "ratio": 0.65,
+      "flat_frames": 76,
+      "ramp_frames": 16,
+      "frames_below_0_9": 86,
+      "verdict": "stacks: the cast frames' step is 0.650 of the bonus-on step, so under a cast the set walks at 0.325 of the unlevered step; the flat part ran 76 frames against Mod live 1's 57 for a key cast without the set, why not established",
+      "watch_cap": "the watch effect reply hit its 400-line cap after 132 of 480 frames; the step's return was read from pos"
+    },
+    "source": "ForgePact docs/mark1-set-research.md (Phase 2: the mod, Mod live procedure 3 and Mod live 3 results, Phase 2 decision's penalty-stack); forgepact-166-mark1-set-turns-live-1.md, not tracked"
+  },
+  "gate_args": {
+    "status": "measured",
+    "date": "2026-10-13",
+    "checks": {
+      "ctu-args": "not-observed"
+    },
+    "calls_read": 300,
+    "per_frame": 1,
+    "args": [
+      "the local player, as a VALUE_REF",
+      1,
+      1
+    ],
+    "what": "Every local CheckTalentUse call read, 100 idle and 100 twice with Q held down, carried the same three arguments, one call per frame, and every call the probe counted was the local player's. No argument names a bar slot. Holding Q down cast nothing in either window, so the value for a pressed slot was not seen (hence not-observed); the cast is driven by the input entry instead (slot_keys, cast_route).",
+    "source": "ForgePact docs/mark1-set-research.md (Live 1 results); forgepact-166-mark1-set-live-1.md (S6), not tracked"
+  },
+  "slot_keys": {
+    "status": "measured",
+    "decision": "measured",
+    "date": "2026-10-13",
+    "checks": {
+      "slot-keys": "pass"
+    },
+    "profile_slot": "Input_Device_Manager_obj instance 0, playerProfileSlot entry 1 (the index CheckTalentUse's third argument names)",
+    "input_entries": {
+      "Q": 3,
+      "E": 4,
+      "R": 5,
+      "Y": 6
+    },
+    "also_moving": {
+      "Q": 26,
+      "E": 25
+    },
+    "states": {
+      "resting": 1,
+      "press_frame": 4,
+      "held": 3,
+      "release_frame": 2
+    },
+    "what": "Each bar key moved one inputState entry of the profile slot, the bar column its slot sits on (Q on column 3 to Y on column 6). Entries 26 and 25 moved together with Q and E, for a reason not read. The other bar columns were not measured.",
+    "source": "ForgePact docs/mark1-set-research.md (Live 1 results); forgepact-166-mark1-set-live-1.md (S7), not tracked"
+  },
+  "cast_route": {
+    "status": "measured",
+    "decision": "input",
+    "date": "2026-10-13",
+    "checks": {
+      "key-cast-control": "pass",
+      "queue-observed": "pass",
+      "cast-input": "pass",
+      "cast-other": "not-run"
+    },
+    "lever": "mark1probe set profile.inputState[<column>] 4 during CheckTalentUse <frames>",
+    "talent": 253,
+    "skill": "Mana Orb, bar slot 0,3",
+    "effect_before": 0,
+    "effect_after": 1,
+    "applied_by_first_show": 210,
+    "casts": 1,
+    "what": "With no key pressed, writing the press value 4 into the slot's inputState entry just before each local CheckTalentUse call, and restoring it after, cast the slot's skill. During two key presses with one cast, none of the first four entries (0-3) of abilityQueue, mobileTalentPressed or the player's stackSkillList changed between end-of-frame samples; later slots and an entry set and cleared within one gate call were not visible, so whether a key cast uses the queue is not established. The queue and mobile levers were not tried, because the input lever cast first.",
+    "source": "ForgePact docs/mark1-set-research.md (Live 1 results, Decision); forgepact-166-mark1-set-live-1.md (S5, S8, S9), not tracked"
+  },
+  "cast_gate": {
+    "status": "not-observed",
+    "decision": "not-observed",
+    "date": "2026-10-13",
+    "checks": {
+      "cast-gate": "not-observed",
+      "empty-slot": "pass"
+    },
+    "forced_frames": 480,
+    "casts_in_forced_frames": 1,
+    "empty_slot_talent_use_calls": 0,
+    "what": "With the press value forced on every gate call for more than 480 frames (about 5.6 s at ~85 fps), Mana Orb was cast once; what refused the repeats (cooldown, mana, the orb still alive, or how the forced press is seen) and Mana Orb's cooldown were not read, so whether the cooldown applies to a forced press is not established. The lever on an empty column called no TalentUse at all. The mana half was not seen: in a 120-frame watch of the player no member named for mana fell (manaArrayPos moved upwards). Its control, key-cast-control, passed in the same session.",
+    "source": "ForgePact docs/mark1-set-research.md (Live 1 results, Decision); forgepact-166-mark1-set-live-1.md (S10, S13), not tracked"
+  },
+  "toggle_under_automation": {
+    "status": "measured",
+    "decision": "flips",
+    "date": "2026-10-13",
+    "checks": {
+      "toggle-flips": "pass"
+    },
+    "talent": 240,
+    "skill": "Soul Spurn, bar slot 0,5",
+    "counted_object": "White_Mage_Soul_Spurn_AOE_obj",
+    "frames": 600,
+    "on_flips": 13,
+    "off_flips": 13,
+    "casts": 22,
+    "ends": "off",
+    "what": "The input lever held on the toggle's column switched it on and off again every 10 to 30 frames; it does not stay on.",
+    "source": "ForgePact docs/mark1-set-research.md (Live 1 results); forgepact-166-mark1-set-live-1.md (S12), not tracked"
+  },
+  "cast_penalty": {
+    "status": "not-observed",
+    "decision": "not-observed",
+    "date": "2026-10-13",
+    "checks": {
+      "walk-control": "pass",
+      "penalty-baseline": "pass",
+      "dbg-cast-speed": "pass",
+      "penalty-vars": "not-observed",
+      "penalty-lever": "not-run"
+    },
+    "walks_px": {
+      "control_1": 1049.3,
+      "control_2": 980.5,
+      "with_cast": 949
+    },
+    "step_px": {
+      "normal": 5.979,
+      "after_cast": 3.886,
+      "after_cast_frames": 21
+    },
+    "cast_speed_caller": "TalentUse",
+    "cast_speed_hits": 17,
+    "members_changed_not_settling": [
+      "playerSequenceTopPrev",
+      "playerSequenceBottomPrev",
+      "playerSequenceDirection",
+      "manaArrayPos"
+    ],
+    "pst": "an array of 54 entries, neither a struct nor an instance; the probe's pst watch reads no members of it",
+    "what": "The penalty itself is measured: Healing Zone cast one second into a three-second walk cut the step to about 0.65 of itself for about 21 frames, then it climbed back; the walk covered 6.5% less than the controls' mean. Every TalentUseSetSpeed logpoint hit returned to its one direct call site in TalentUse (CA_playerTalentActive not observed). No player member that changes at the cast and settles back was found, and pSt could not be watched, so the member holding the penalty is not observed and no lever was tried.",
+    "source": "ForgePact docs/mark1-set-research.md (Live 1 results, Decision); forgepact-166-mark1-set-live-1.md (S14 to S17), not tracked"
+  },
+  "walk_mover": {
+    "status": "measured",
+    "decision": "outside-rows",
+    "date": "2026-10-13",
+    "checks": {
+      "walk-control": "pass",
+      "walk-mover": "pass",
+      "dbg-stat-movement": "pass"
+    },
+    "walks_px": {
+      "control_1": 932.7,
+      "control_2": 855
+    },
+    "PlayerMovement_calls_in_walk": 810,
+    "moving_calls_in_rows": 0,
+    "stat_movement_caller": "ReturnSpecificStat",
+    "stat_movement_hits": 2008,
+    "stat_movement_per_frame": 1,
+    "what": "During a walk PlayerMovement runs once a frame, but none of the nine rows' calls changes the player's position: the walk's displacement is applied outside all of them. StatMovementSpeed runs once a frame standing or walking, every call returning to the dispatcher's direct call site in ReturnSpecificStat, and nothing called it directly.",
+    "source": "ForgePact docs/mark1-set-research.md (Live 2 results, Decision); forgepact-166-mark1-set-live-2.md (T4, T5), not tracked"
+  },
+  "speed_lever": {
+    "status": "measured",
+    "decision": "stat",
+    "date": "2026-10-13",
+    "checks": {
+      "speed-move": "not-run",
+      "speed-stat": "pass"
+    },
+    "lever": "mark1probe stat 64 0.5 240",
+    "changed_dispatch": 240,
+    "changed_getter": 0,
+    "skip": 240,
+    "walk_px": {
+      "with_lever": 696.9,
+      "controls_mean": 893.9,
+      "recheck_without_lever": 878.9
+    },
+    "step_px": {
+      "normal": 5.979,
+      "with_lever": 4.693
+    },
+    "step_ratio": 0.785,
+    "what": "x0.5 on id 64's result at the dispatcher, on every call for 240 frames, slowed the walk's step to 0.785 of itself, not 0.5. The lever scaled only the dispatcher's answer: skip=240 means every local StatMovementSpeed call inside the dispatcher returned a non-number to the probe, so the getter route never scaled (changed_getter 0), against the probe core's tested model. Halving the dispatcher's id-64 answer gave 0.785 of the step. Whether the step is not proportional to it (base, cap, floor), whether the walk also reads movement speed by a route the dispatcher lever does not reach (e.g. the cached pSt values PlayerMovement reads), and why the getter's own result was not a number to the probe (skip=240) are not established. The move lever did not run (instrument: no row moves the walk).",
+    "source": "ForgePact docs/mark1-set-research.md (Live 2 results, Decision); forgepact-166-mark1-set-live-2.md (T6, T7), not tracked"
+  },
+  "jump_mover": {
+    "status": "measured",
+    "decision": "skillsLeap",
+    "date": "2026-10-13",
+    "checks": {
+      "jump-control": "pass",
+      "jump-mover": "pass",
+      "dbg-stat-jump": "not-observed",
+      "jump-vars": "not-run"
+    },
+    "jumps_px": {
+      "control_1": 96.9,
+      "control_2": 96.9
+    },
+    "cursor_px": [
+      100.95,
+      100.31
+    ],
+    "skillsLeap_moving_calls_per_jump": 102,
+    "playerJumpGravity_calls_per_jump": 101,
+    "playerJumpGravity_moving_calls": 0,
+    "StatJumpPower_calls": 0,
+    "what": "The jump is moved by skillsLeap alone; playerJumpGravity runs alongside and never moves the player. StatJumpPower logged no hit over six jumps while the control logpoint kept logging. The jump's state members were not read (pSt unreadable by the probe's watch).",
+    "source": "ForgePact docs/mark1-set-research.md (Live 2 results, Decision); forgepact-166-mark1-set-live-2.md (T8, T9), not tracked"
+  },
+  "jump_lever": {
+    "status": "measured",
+    "decision": "move",
+    "date": "2026-10-13",
+    "checks": {
+      "jump-move": "pass",
+      "jump-stat": "pass"
+    },
+    "move_lever": "mark1probe move skillsLeap 3 300",
+    "near": {
+      "cursor_px": 100,
+      "baseline_px": 96.9,
+      "with_move_px": 290.7,
+      "ratio": 3.0,
+      "with_stat_px": 96.9
+    },
+    "far": {
+      "cursor_px": 300,
+      "baseline_px": 250.3,
+      "with_move_px": 738.8,
+      "ratio": 2.95,
+      "with_stat_px": 246.3
+    },
+    "stat_lever": "mark1probe stat 66 3 300",
+    "stat_changed_dispatch": 0,
+    "stat_changed_getter": 0,
+    "what": "x3 on each skillsLeap call's own displacement tripled the jump, near and far, well past the jump's usual reach of about 246 px. x3 on Jump Power never engaged: a jump neither entered StatJumpPower nor asked the dispatcher for id 66; whether it reads a cached Jump Power value (e.g. in pSt, refreshed by the player's Alarm 8) is not established. Whether the game's own landing checks still hold at a scaled landing point was not measured.",
+    "source": "ForgePact docs/mark1-set-research.md (Live 2 results, Decision); forgepact-166-mark1-set-live-2.md (T10, T11), not tracked"
+  },
+  "walkable": {
+    "status": "measured",
+    "decision": "combined",
+    "date": "2026-10-13",
+    "checks": {
+      "walkable-control": "pass",
+      "walkable-prop": "pass",
+      "walkable-edge": "pass"
+    },
+    "room": "Town_01_rm",
+    "test": "room=in and family=free: the point lies inside the room, and the player placed there meets nothing of Collision_Parent_obj (place_meeting)",
+    "raw_kinds": {
+      "place_meeting": "real 0 (no meeting) or 1 (a meeting), not bool, when called through CallBuiltinEx with the player as self and other",
+      "collision_line": "ref: an instance, or -4 (noone)",
+      "mp_grid_get_cell": "real: 0 free, -1 blocked or outside the grid"
+    },
+    "control_reading": {
+      "room": "in",
+      "grid": "free",
+      "family": "free",
+      "wall-line": "clear",
+      "grid-raw": "real:0",
+      "family-raw": "real:0",
+      "wall-line-raw": "ref:-4",
+      "points": "the player's own position and 32 px to either side, open floor"
+    },
+    "prop": {
+      "object": "Bounty_Board_obj",
+      "grid": "free",
+      "family": "blocked",
+      "wall-line": "clear",
+      "footprint_px_on_line": 64,
+      "note": "only family saw the prop; points on its drawn sprite above its base read free on every field"
+    },
+    "edge": {
+      "side": "south of the town",
+      "marked_by": "Invisible_Wall_Not_Minimap_obj instances, met by place_meeting as Collision_Parent_obj and returned by collision_line as Wall_Parent_obj; nothing on screen draws them",
+      "family_leads_px": 16,
+      "order": "family blocked first, then grid (-1) and wall-line (crossed) one 16 px step later; all stayed blocked to the room's bottom",
+      "past_room": "room=out, grid blocked and wall-line crossed, but family free again past the invisible walls",
+      "other_blockers": "water (Block_Dynamic_Sprite_obj), Fall_Rock_01_obj and Fall_Dead_Tree_02_obj block both grid and family, wall-line clear"
+    },
+    "tile": "none of the four tile layers read (Darkness, Hay_Ground, Leaves_Ground, Water) marks the edge; Town_01_rm's later tile layers were not read; values vary across open floor, Water is non-zero only on water, every layer reads -1 outside the room",
+    "live_2": "walkable-control failed: that build's probe counted any number of 0 or more from place_meeting as a meeting, so its real 0 printed blocked everywhere; corrected in ForgePact 61243b2",
+    "what": "In Town_01_rm a walkable landing point is one inside the room where the player would meet nothing of Collision_Parent_obj. family alone saw the prop, which the path grid and the wall line missed, and turned blocked at the edge 16 px before them, but read free past the room's bottom, where only room and the grid still said no. Not measured: a generated zone, why the path grid's cells under the Bounty Board read free, whether pockets between blockers are reachable on foot, and the test at a jump's landing.",
+    "source": "ForgePact docs/mark1-set-research.md (Live 3 results, Decision, Not established); forgepact-166-mark1-set-live-3.md (W2 to W4), not tracked"
+  },
+  "mod_live_4": {
+    "status": "measured",
+    "date": "2026-10-20",
+    "procedure": "Phase 3's Mod live procedure 4, the Mark 1 drops on the Heroic roll (DropItemHeroic) called by name, on save slot 14 Sorak with the debugger attached, 14:21 to 14:38 UTC. The build predates the kill route and the tier change: the pieces it built read rarity 9 and were not SS, so the owner's loot filter hid them.",
+    "game_exe_sha256": "498d588550d80d0d100a4ce6958bcc044e6b79339920d3d8a931bca9a1b142c0",
+    "research_dll_sha256": "3ab4ec05ed3ad7f3bc92098fefbde89512f90d28aeffc860c56c054a5fae1da8",
+    "forgepact_commit": "9132dea",
+    "summary": "15 checks: 10 pass, 1 fail (drops-on), 4 not observed (drop-built, drop-art, heroic-natural, dbg-heroic). drops-on failed because the stand-ins read none before the first roll had resolved them; Mod live 5 re-checked drops-on, drop-built and drop-art and they passed.",
+    "checks": {
+      "dll-hash": "pass",
+      "control": "pass",
+      "marker": "pass",
+      "fresh-off": "pass",
+      "dbg-control": "pass",
+      "heroic-control": "pass",
+      "pool": "pass",
+      "drops-on": "fail",
+      "reach": "pass",
+      "drop-built": "not-observed",
+      "drop-art": "not-observed",
+      "rate": "pass",
+      "drop-off": "pass",
+      "heroic-natural": "not-observed",
+      "dbg-heroic": "not-observed"
+    },
+    "decision": {
+      "standins": "all",
+      "heroic-t": 203,
+      "heroic-natural": "not-observed"
+    },
+    "heroic_control": "drops off, 10 by-name calls: placed 10, rarity 6 x4 and 9 x6, no piece; dbg-heroic 10 hits",
+    "pool": {
+      "list_5": {"length": 380, "kept": 203, "kept_by_rarity": {"6": 93, "9": 110}, "refused_by_rarity": {"7": 31, "10": 17}, "hidden": 129},
+      "list_4": {"length": 221, "kept": 218, "kept_by_rarity": {"6": 218}, "hidden": 3},
+      "standins_list_5": {"helmet": "0:1 rarity 9 x1", "body": "0:35 rarity 9 x1", "boots": "0:36 rarity 9 x1", "gloves": "0:29 rarity 9 x1"},
+      "standins_list_4": {"helmet": "0:0 rarity 6 x1", "body": "0:0 rarity 6 x1", "boots": "0:7 rarity 6 x1", "gloves": "0:4 rarity 6 x1"}
+    },
+    "reach": "copies 200, 40 by-name calls on list 5: 32 pieces (helmet 10, body 13, boots 6, gloves 3), each ours and built, refused 0, anomalies 0, heroic-calls 0 to 40; dbg-heroic stayed 10 (by-name calls after the detour no longer pass the logpoint's entry)",
+    "rate": "copies 1, 100 by-name calls: 2 pieces (body 1, gloves 1), each handed over by the coin at 1 in 2; the 3-sigma band for 4 / (203 + 4) over 100 calls is (-2.197, 6.062); refused 0, anomalies 0; injected 32400 over the session (40 x 800 + 100 x 4)",
+    "drop_off": "copies 200, drops off, 20 calls: 20 placed, no piece, injected 32400 unchanged",
+    "heroic_natural": "no vault item in the bag; no natural Heroic roll made",
+    "source": "ForgePact docs/mark1-set-research.md (Mod live 4 results, Phase 3 decision); docs/RUNTIME_DATA_MODELS.md 23.4; forgepact-166-mark1-set-drops-live-1.md, not tracked"
+  },
+  "mod_live_5": {
+    "status": "measured",
+    "date": "2026-10-20",
+    "procedure": "Phase 3's Mod live procedure 5, the Mark 1 drops' DropUniqueItems route (the kill route of that build, through the detour shared with Pocket Elf), the pieces' SS tier and the owner's loot filter, on save slot 14 Sorak with the debugger attached, from 16:47 UTC; the kill window was 30 minutes of kills and chests in the Outskirts of Inoya on Hell.",
+    "game_exe_sha256": "498d588550d80d0d100a4ce6958bcc044e6b79339920d3d8a931bca9a1b142c0",
+    "research_dll_sha256": "d65ce50aad1ddf9b66f4552de6d0bbdbb8f2fa724eb838aabad4bec864376961",
+    "forgepact_commit": "9c6756e",
+    "summary": "20 checks: 17 pass, 2 not observed (filter-control, kill-natural), 1 not run (filter-shown, its control not observed). Every by-name check passed; the kill route stayed inconclusive because no kill ran DropUniqueItems in 30 minutes.",
+    "checks": {
+      "dll-hash": "pass",
+      "control": "pass",
+      "marker": "pass",
+      "dbg-control": "pass",
+      "kill-control": "pass",
+      "filter-control": "not-observed",
+      "drops-on": "pass",
+      "pool-kill": "pass",
+      "reach-kill": "pass",
+      "tier-read": "pass",
+      "sig-untouched": "pass",
+      "filter-shown": "not-run",
+      "drop-built": "pass",
+      "drop-art": "pass",
+      "tier-ss": "pass",
+      "heroic-still": "pass",
+      "spawn-tier": "pass",
+      "kill-natural": "not-observed",
+      "dbg-unique": "pass",
+      "drop-off": "pass"
+    },
+    "decision": {
+      "kstandins": "all",
+      "kill-natural": "not-observed in this session; see mod_live_6"
+    },
+    "pool_kill": {
+      "lengths": [50, 61, 79, 152, 221],
+      "unread": 0,
+      "standins": {"helmet": "0:15 rarity 6", "body": "0:1 rarity 6", "boots": "0:9 rarity 6", "gloves": "0:16 rarity 6"},
+      "standin_counts_on_lists_0_to_4": [0, 0, 0, 0, 0]
+    },
+    "reach_kill": "copies 200, 40 by-name DropUniqueItems calls: 35 pieces (helmet 5, body 8, boots 10, gloves 12), each ours and built, refused 0, anomalies 0, kill-calls 1 to 41, injected 160020 (40 x 800 x 5 lists, plus 20 from the one call at copies 1)",
+    "tier": "35 of 35 Mark 1 placed lines rarity 6, tier 5; tooltip Tier SS on the ground and in the bag (tier-ss) and on the spawned helmet (spawn-tier)",
+    "kill_natural": "30 minutes of kills and chests in Hell: dbg-unique 50 to 50, kill-calls 42 to 42, the control logging throughout",
+    "source": "ForgePact docs/mark1-set-research.md (Mod live 5 results, Phase 3 decision); docs/RUNTIME_DATA_MODELS.md 18.5 and 23.4; forgepact-166-mark1-set-drops-live-2.md, not tracked"
+  },
+  "mod_live_6": {
+    "status": "measured",
+    "date": "2026-10-20",
+    "procedure": "Phase 3's Mod live procedure 6, the kill lever (mark1probe killgate on LoadDrops) and whether a vanilla kill's unique comes through DropUniqueItems, on save slot 14 Sorak with the debugger attached. Attempt 1 (from 18:28 UTC) was aborted: a hardware logpoint on LoadDrops logged 14398 of the game's calls, the game fell to about 1 fps and froze, and it was force-stopped and restored; none of its checks is used. Attempt 2 (19:05 to 19:25 UTC) is the record: the operator's kills in the Outskirts of Inoya on Hell (zone level 243), then about 8.7 minutes of the owner's own play at about 101 to 227 fps, lever off.",
+    "game_exe_sha256": "498d588550d80d0d100a4ce6958bcc044e6b79339920d3d8a931bca9a1b142c0",
+    "research_dll_sha256": "0845ee4f6a7b2116d20e6ad5d10af4d912910f0d55a2269d858f980ebda67cb7",
+    "forgepact_commit": "38c35ea",
+    "summary": "Attempt 2: 16 checks, 15 pass, 1 not observed (filter-control). kill-natural read seen only with the lever on; with it off no kill ran DropUniqueItems, and vanilla-unique-path read other-path with kill-control passing in the same attempt.",
+    "checks": {
+      "dll-hash": "pass",
+      "control": "pass",
+      "marker": "pass",
+      "dbg-control": "pass",
+      "kill-control": "pass",
+      "filter-control": "not-observed",
+      "drops-on": "pass",
+      "filter-shown": "pass",
+      "lever-sees": "pass",
+      "dbg-loaddrops": "pass",
+      "natural-45": "pass",
+      "kill-natural": "pass",
+      "dbg-unique": "pass",
+      "lever-opened": "pass",
+      "lever-off": "pass",
+      "vanilla-unique-path": "pass"
+    },
+    "decision": {
+      "kill-natural": "seen",
+      "vanilla-unique-path": "other-path"
+    },
+    "filter_shown": "Mark 1 Boots, rarity 6, tier 5, ground label 'Mark 1 Boots | SS' past the owner's filter with no lootshow; filter-control not observed (no tier-5 item in 30 calls)",
+    "type_45": {
+      "operator_lever_off": {"loaddrops": 922, "arrays": 51, "c45_nonzero": 0, "c45_max": 0, "game45": 0},
+      "owner_window_lever_off": {"minutes": 8.7, "loaddrops": 45332, "arrays": 1831, "c45_nonzero": 0, "c45_max": 0, "game45": 0, "kill_calls": 0, "dbg_unique": 0}
+    },
+    "lever": {
+      "on": "one batch: arrays 51 to 108, reentered 0 to 57, raised 0, threw 0, unique-during 0 to 57, kill-calls 1 to 58, dbg-unique 40 to 97; 48 pieces built (helmet 13, body 13, boots 9, gloves 13), on screen with SS labels",
+      "off_again": "two batches: loaddrops 1565 to 2240, arrays 108 to 147, raised and reentered unchanged, kill-calls and dbg-unique flat"
+    },
+    "vanilla_uniques": "4 natural uniques in the owner's window (Molten Boots, Arcane Robes of Authority, Heaven's Champion, Gladiator's Skullet), each with dbg-unique +0 and kill-calls +0",
+    "source": "ForgePact docs/mark1-set-research.md (Mod live 6 results, Phase 3 decision); docs/RUNTIME_DATA_MODELS.md 13.1 and 18.5; forgepact-166-mark1-set-drops-live-3.md (# Attempt 2), not tracked"
+  },
+  "mod_live_7": {
+    "status": "measured",
+    "date": "2026-10-20 to 2026-10-21",
+    "procedure": "Phase 4's Mod live procedure 7, the unique draw inside DropItem, in three sessions on save slot 14 Sorak in Hell with every Mark 1 and flight switch off: Live 1 (2026-10-20, 21:48 to 22:06 UTC; operator kills, the push lever, then the owner's 10-minute window; debugger attached), Live 1b (2026-10-21, 08:37 to 09:19 UTC; the owner's play with the lever at c = 25, below-SS half then SS half; no debugger) and Live 1c (2026-10-21, 09:51 to 10:24 UTC; SS half only at magic find x10, debugger attached; the below control half was not run because the owner closed the session once ss-build read seen)",
+    "game_exe_sha256": "498d588550d80d0d100a4ce6958bcc044e6b79339920d3d8a931bca9a1b142c0",
+    "research_dll_sha256": {
+      "live_1": "8aef7ec5a2949fc4e03668581d66b240ba2da321ab5bc272c43d33289ef3884c",
+      "live_1b": "b46e5ab34d4005cb85da82633b4e8f1fa0efeff147513a83ef8263b9a5511f85",
+      "live_1c": "b46e5ab34d4005cb85da82633b4e8f1fa0efeff147513a83ef8263b9a5511f85"
+    },
+    "forgepact_commit": {
+      "live_1": "c45f940",
+      "live_1b": "501a928",
+      "live_1c": "501a928"
+    },
+    "summary": "Live 1: 18 checks, 16 pass, 2 not observed (push-sees, retsat). Live 1b: 9 checks, 8 pass, 1 fail (push-sees). Live 1c: 15 checks, 12 pass, 1 fail (dbg-draw-build), 1 not observed (ss-native), 1 not run (below-builds). Every session-validity check passed in all three.",
+    "checks": {
+      "dll-hash": "pass",
+      "control": "pass",
+      "marker": "pass",
+      "dbg-control": "pass",
+      "draws-on": "pass",
+      "kill-control": "pass",
+      "kill-normal": "pass",
+      "push-off": "pass",
+      "push-sees": "not-observed",
+      "pool-draw": "pass",
+      "vanilla-route": "pass",
+      "tier-k": "pass",
+      "draw-reads": "pass",
+      "arg7": "pass",
+      "retsat": "not-observed",
+      "dbg-draw": "pass",
+      "dbg-draw-build": "pass",
+      "dbg-arglist": "pass",
+      "live_1b": {
+        "dll-hash": "pass",
+        "control": "pass",
+        "draws-on": "pass",
+        "push-standins": "pass",
+        "push-held": "pass",
+        "window-draw": "pass",
+        "push-kept-below": "pass",
+        "push-sees": "fail",
+        "push-off": "pass"
+      },
+      "live_1c": {
+        "dll-hash": "pass",
+        "control": "pass",
+        "switches-off": "pass",
+        "draws-on": "pass",
+        "mf-on": "pass",
+        "push-held": "pass",
+        "push-off": "pass",
+        "dbg-control": "pass",
+        "ss-picks": "pass",
+        "ss-build": "pass",
+        "ss-native": "not-observed",
+        "below-builds": "not-run",
+        "dbg-ss75-a": "pass",
+        "dbg-ss75-b": "pass",
+        "dbg-draw-build": "fail"
+      }
+    },
+    "decision": {
+      "unique-route": "satanic-draw",
+      "tier-k": "matches",
+      "push-route": "seen",
+      "draw-mode": "first-kept",
+      "ss-build": "seen"
+    },
+    "route": {
+      "value": "satanic-draw",
+      "what": "An ordinary kill's unique is built by DropItem's own draw on Controller_obj.lootListUnique[k], k being LoadSatanicDropTier's answer, outside every nested roll. Live 1's owner window built 4 natural uniques that way (2 named by the owner), with DropUniqueItems, ReturnRandomSatanic and builds outside DropItem flat; the debugger logpoint on the draw's own CreateDefaultParams call rose by 4. Live 1b built 9 and Live 1c 105 that way, and 2 in each inside the nested DropUniqueItems roll. The rule's clause that the argument-7 draw's lookup stay flat did not hold (49 hits in Live 1's window), but every draw-scope build went through the Satanic draw's own build call (4 of 4, 105 of 105), and the driver read the route as satanic-draw on 2026-10-21."
+    },
+    "tier_histogram": {
+      "what": "LoadSatanicDropTier's answers 0 to 5 as raredrop's one detour counted them (tiers=), against DropItem's calls=. About one answer per call in Live 1b and 1c; in Live 1 the answers outnumber the calls, and why is not established.",
+      "live_1_session": {"tiers": [0, 12, 14, 9, 99, 733], "calls": 497},
+      "live_1_owner_window": {"tiers": [0, 9, 11, 6, 73, 81], "calls": 112},
+      "live_1b_session": {"tiers": [0, 179, 193, 169, 1530, 1432], "calls": 3544},
+      "live_1c_ss_half": {"tiers": [0, 405, 401, 410, 3449, 3432], "calls": 8146}
+    },
+    "draw_builds_by_k": {
+      "what": "Natural uniques built in scope draw, by the call's k; each one's triple sat on list k and its tier equalled k (on-k), none off it (off-k=0). Stand-in builds (pick-builds) are not included.",
+      "live_1_owner_window": [0, 1, 2, 0, 1, 0],
+      "live_1b": [0, 0, 0, 0, 8, 0],
+      "live_1c_ss_half": [0, 22, 5, 14, 59, 3]
+    },
+    "draw_reads": {
+      "what": "reads= of each natural draw build: GetUniqueRepoStruct reads in its scope since the last build",
+      "live_1": [28, 9, 19, 85],
+      "live_1b": [4, 2, 5, 3, 2, 2, 4, 3],
+      "median_live_1_and_1b": 4,
+      "live_1c_median": 3,
+      "live_1c_max": 249
+    },
+    "arg7": {
+      "what": "DropItem calls whose argument 7 was a list, against all calls (always 12 arguments); in Live 1's owner window the argument-7 draw's GetUniqueRepoStruct call logged 49 hits and built no unique",
+      "live_1": {"list": 392, "undefined": 105, "calls": 497},
+      "live_1b": {"list": 2682, "undefined": 862, "calls": 3544},
+      "live_1c": {"list": 6934, "undefined": 1212, "calls": 8146}
+    },
+    "lever": {
+      "standins_ss": "helmet 0:15, body 0:1, boots 0:9, gloves 0:16; rarity 6, tier 5, on list 5 only",
+      "standins_below": "helmet 0:0 tier 4, body 0:0 tier 4, boots 0:0 tier 1, gloves 0:0 tier 2; rarity 6, each on its own tier's list",
+      "pool_draw_elf": "class 10: 51 candidates, 24 SS, best SS 0:1 tier 5 on list 5 only; best below SS 0:0 tier 4",
+      "live_1b_below": {"s": 4, "c": 25, "calls": 971, "reads": 8562, "draw": 3, "on_k": 2, "off_k": 0, "picks": 1, "pick_builds": 1, "push_held": 971, "push_skipped": 0, "pushed_reads": 1943, "dropunique": 2, "n": 3, "mean_list_k_length": 274.0},
+      "live_1b_ss": {"s": 4, "c": 25, "calls": 2336, "reads": 20113, "draw": 6, "on_k": 6, "off_k": 0, "picks": 13, "pick_builds": 0, "push_held": 2336, "push_skipped": 0, "pushed_reads": 4538, "dropunique": 0, "n": 6, "n_by_owner_attribution": 5, "mean_list_k_length": 221, "picks_per_draw_instrument_count": 2.17},
+      "live_1c_ss_x10": {"s": 4, "c": 25, "minutes": 28, "calls": 8146, "reads": 71988, "draw": 105, "on_k": 103, "off_k": 0, "picks": 47, "pick_builds": 2, "push_held": 8146, "push_skipped": 0, "pushed_reads": 14729, "dropunique": 2, "outside": 11, "draw_per_minute": 3.75, "picks_per_minute": 1.7, "picks_per_read_interval": [10, 7, 30, 0], "draw_per_read_interval": [12, 20, 73, 0]},
+      "below_pick_build": "Live 1b: Shadow's Grasp (class 4, base 0, tier 2, list 2 only) built in scope draw at k = 5, the gloves below-SS stand-in; this record's reading of the capture, which the watch's pick-builds=1 agrees with",
+      "ss_pick_builds": "Live 1c: Pirate Captain's Hat (class 0, base 15, rarity 6, tier 5, list 5 only) at k = 2 and Pirate Captain's Boots (class 2, base 9, rarity 6, tier 5, list 5 only) at k = 4, both in scope draw, both named by the owner"
+    },
+    "ss_check": {
+      "what": "The draw's tier-5 test on protected value slot 75. A pushed SS stand-in is rarely built through the draw: 2 SS stand-ins built among 105 draw builds at magic find x10 (Live 1c), 0 among 6 at x1 (Live 1b; not pooled), against about 0.3 of draws expected if the draw kept the first entry it reads (s*c = 100 copies on lists of about 221 entries). Why SS stand-ins are rarely built is not established. The probe's picks= (47 in Live 1c, 13 in Live 1b) is an instrument count, not the draw's picks: it counts any CreateDefaultParams call in the draw's scope whose sub and b match a pushed triple read since the read window was last cleared, it does not compare the class, and a normal build does not clear the window. The debugger logpoint on the draw's own CreateDefaultParams call hit 105 times, equal to the 105 draw builds and including both stand-ins, so the other 45 counted calls ran at another call site; they are not the draw picking a stand-in and sending it back. Both slot-75 read sites were reached (at least 3.1 and 1.57 hits a call; the log condition's literals were read as hex, so counts resolve to 512) and every logged hit carried 75.0, a real, as the logpoint's logged value (139 lines). Whether that is the index argument or the value stored in slot 75 is not established, and the comparison after the read was not logged, so whether the tier-5 test rejects anything is not established either. No natural rarity-6 tier-5 unique was built through the draw in 28 minutes at x10; natural tier-5 draw builds came at k = 5 with rarity 7 (1, the owner calls it Angelic) and rarity 9 (2, Heroic). Aimbot.exe (class 10, base 76, rarity 6, tier 5) was built 8 times in scope outside.",
+      "slot_75_logpoint_logged_value": 75.0,
+      "slot_75_logpoint_logged_value_note": "the value the slot-75 logpoint logged on every hit; it may be the index argument rather than the value stored in slot 75 (not established)"
+    },
+    "source": "ForgePact docs/mark1-set-research.md (Mod live 7 results, Phase 4 decision); docs/RUNTIME_DATA_MODELS.md 13.12; forgepact-166-mark1-set-uniques-live-1.md, -live-1b.md and -live-1c.md, not tracked"
+  },
+  "mod_live_8": {
+    "status": "measured",
+    "date": "2026-10-21",
+    "procedure": "Phase 4's Mod live procedure 8, the Mark 1 drops and Pocket Elf moved onto DropItem's own unique draw, on save slot 14 Sorak in Hell with no debugger. Attempt 2 (14:57 to 15:45 UTC) is the record: L3 and the operator's L4 batches in the Outskirts of Inoya (zone level 243), the owner's L4 play in The Devil's Breach (zone level 276). Magic find x10 from L3, raised to x100 partway through L4 by the owner (an owner deviation, at draw-typed=2/21); L4 at copies 400 for every piece and Pocket Elf. Attempt 1 (13:34 to 13:59 UTC, ForgePact e19b70d, DLL SHA-256 e1642ea3eef60543dc891bf7bffb6cd558dbb977eaf224cc8f75e3ae04f98d13) stopped in L3: its typed-build count read the class as a number only and saw none of the unique builds (draw-typed=0/0 over 8342 draw calls while the owner saw uniques drop), so its checks were not run.",
+    "game_exe_sha256": "not recorded in the capture; the procedure requires Mod live procedure 7's build, 498d588550d80d0d100a4ce6958bcc044e6b79339920d3d8a931bca9a1b142c0",
+    "research_dll_sha256": "10fdd37cb6c882771b604d57ba73b7c3aa2146fccdb62a143d1dd2711f15572b",
+    "forgepact_commit": "b59a017",
+    "summary": "14 checks: 13 pass, 0 fail, 1 not observed (natural-draw). Every session-validity check passed.",
+    "checks": {
+      "dll-hash": "pass",
+      "control": "pass",
+      "marker": "pass",
+      "draw-control": "pass",
+      "drops-on": "pass",
+      "elf-on": "pass",
+      "draw-pieces": "pass",
+      "draw-elf": "pass",
+      "nested-clean": "pass",
+      "heroic-still": "pass",
+      "unique-still": "pass",
+      "drop-off": "pass",
+      "natural-draw": "not-observed",
+      "draw-scope": "pass"
+    },
+    "decision": {
+      "draw-claim": "yes",
+      "elf-claim": "yes"
+    },
+    "draw_control": {
+      "what": "L3's second operator batch at copies 1, magic find x10: draw-calls and draw-pushed 0 to 102, draw-typed 0/0 to 0/2, elf-draw-typed 0/0 to 0/2, draw-class-check 0/0/0 to 17/0/0 on both lines, draw-class bool:2/15,num:0/0. No fail exit at any read."
+    },
+    "l4": {
+      "copies": 400,
+      "draw_typed": {"start": "0/2", "end": "8/61", "rise": 67, "own_standin_rise": 8, "rise_at_magic_find_x10": 21, "rise_at_magic_find_x100": 46},
+      "elf_draw_typed": {"start": "0/2", "end": "1/68", "rise": 67, "own_standin_rise": 1, "rise_at_magic_find_x10": 21, "rise_at_magic_find_x100": 46},
+      "draw_builds": {"helmet": 2, "body": 4, "boots": 1, "gloves": 1, "pocket_elf": 1},
+      "own_standin_typed_builds_that_hit": "9 of 9 (8 pieces, 1 Pocket Elf)",
+      "model_share_at_copies_400": "four pieces together about 4.0% (list 5) to 6.6% (list 4) of typed builds, Pocket Elf 1.0% to 1.7%, more on shorter lists (unique_pick_model.draw_share, procedure 8); measured 8 of 67 and 1 of 67; no build's k was recorded",
+      "on_screen_ss": "Mark 1 Body Armor, Mark 1 Helmet and Mark 1 Boots from the draw, Pocket Elf from the draw; no beam or announcement in any frame, lootshow at the drop moment not observed",
+      "anomalies": 0,
+      "refused": 0,
+      "tier_unread": 0,
+      "draw_nested": 7,
+      "draw_outside": "busy:0,aside:5,lists:0,roll:0"
+    },
+    "class_argument": {
+      "what": "Over L3 and L4, 13457 CreateDefaultParams calls in the draw's scope: the third argument read as a bool or absent, never a number. True on the 69 unique builds, false on 8482 normal builds, absent or unset on 4906 more normal builds (which call made those was not read). draw-class-check agreed with the c the game stored on all 13457, 0 disagreements, 0 unread.",
+      "draw_class": "bool:69/8482,num:0/0,none:4906,other:0",
+      "draw_class_check": "13457/0/0"
+    },
+    "dropuniqueitems_on_kills": "kill-calls 0 to 7 with draw-nested 0 to 7 in the owner's L4 play in The Devil's Breach: the ordinary unique roll ran 7 times inside a kill's DropItem call, over about 2900 outermost DropItem calls, and at copies 400 built Mark 1 Boots twice and Mark 1 Gloves once. What opened drop type 45's gate there is not established.",
+    "hit_lines": "No kill draw hit line, and no unique roll hit line for the kills' DropUniqueItems hits, reached bp_ipc out.txt; L6's by-name calls printed theirs in the command reply. Where a hit line made outside a command goes was not looked at.",
+    "source": "ForgePact docs/mark1-set-research.md (Mod live 8 results, Phase 4 decision); docs/RUNTIME_DATA_MODELS.md 13.12; forgepact-166-mark1-set-uniques-live-2.md, not tracked"
+  },
+  "mod_live_9": {
+    "status": "measured",
+    "date": "2026-10-21",
+    "procedure": "Phase 5's Mod live procedure 9, the set tooltip and the pieces' art, on save slot 14 Sorak in town with no debugger, 20:35 to 20:45 UTC; every Mark 1 switch off unless a step said otherwise; saves restored clean at the end.",
+    "research_dll_sha256": "9eda04c6b85dc5976f84035a83f70a65134435bdb04122590aa191d38eb83fbb",
+    "forgepact_commit": "064ddbc",
+    "summary": "15 checks: 12 pass, 3 fail (tip-ground, art-spawn, tip-layout). Every session-validity check passed.",
+    "checks": {
+      "dll-hash": "pass",
+      "control": "pass",
+      "marker": "pass",
+      "art-default": "pass",
+      "art-spawn": "fail",
+      "tip-ground": "fail",
+      "art-bag": "pass",
+      "tip-none": "pass",
+      "tip-two": "pass",
+      "tip-full-off": "pass",
+      "tip-full-on": "pass",
+      "tip-layout": "fail",
+      "art-save": "pass",
+      "tip-rehover": "pass",
+      "desc-plain": "pass"
+    },
+    "fails": {
+      "tip-ground": "The type line (Satanic Set Helmet) and the block were right; the counters were not. The tooltip's call runs every frame while the game draws the text once per hover, so tip-armed counted every frame (0 to 767 over one hover) and typeline-miss every cached frame (0 to 766), with tip and typeline up by 1.",
+      "art-spawn": "mark1probe spawn placed the four pieces on Inoya's waypoint, which is drawn over a ground item lying on it: four labels, no sprite of any kind. The stat line was right (icons=8/8 art=armed ground=4 ground-route=both).",
+      "tip-layout": "The description wrapped at 622 and its first row ran past both edges of the box in all five tooltips; no row overlapped another or the footer."
+    },
+    "tip_rehover": {
+      "tip_armed_per_hover": ["0 to 767", "6349 to 7086", "31718 to 32471", "33750 to 34566", "34566 to 36773"],
+      "tip_and_typeline_per_hover": 1,
+      "resting_three_minutes": "tip-armed 7086 to 31718 with tip and typeline flat"
+    },
+    "desc_plain": "A worn Zealot's Book of Prophecy, +11 to Satan's Mark (White Mage): the skill description showed without ALT and with ALT held, the tooltip identical.",
+    "life_observation": "After mark1set bonus 1 with all four worn, in town: life 720 / 3833 (3833 / 3833 before), then 1030 / 3833 a few seconds later, with presses=355/631/4/0 and cast-calls=3. Cause not read.",
+    "source": "ForgePact docs/mark1-set-research.md (Mod live 9 results); docs/RUNTIME_DATA_MODELS.md 16.6, 16.12, 23.7; forgepact-166-mark1-set-tooltip-live-1.md, not tracked"
+  },
+  "mod_live_10": {
+    "status": "measured",
+    "date": "2026-10-21",
+    "procedure": "Phase 5's Mod live procedure 10, re-checking Mod live 9's three fails on replan 1's build, on save slot 14 Sorak in town, 21:49 to 21:57 UTC, with the hub's x64dbg MCP attached from after S1 to after S6; pieces placed 138 px south of Inoya's waypoint (playerwarp 912 960) and viewed from playerwarp 1040 960; saves restored clean at the end.",
+    "research_dll_sha256": "9567fb0d99fb28da02da164224e194cc4f4632cdb5042fefd6264093380b4777",
+    "forgepact_commit": "2f16449",
+    "summary": "13 checks: 13 pass. Every session-validity, acceptance and research check passed.",
+    "checks": {
+      "dll-hash": "pass",
+      "control": "pass",
+      "marker": "pass",
+      "dbg-control": "pass",
+      "art-spawn": "pass",
+      "dbg-ground-draw": "pass",
+      "tip-ground": "pass",
+      "tip-cached": "pass",
+      "dbg-stat-site": "pass",
+      "tip-none": "pass",
+      "tip-full-off": "pass",
+      "tip-full-on": "pass",
+      "tip-layout": "pass"
+    },
+    "ground_sprite_names": ["__newsprite32286", "__newsprite32288", "__newsprite32290", "__newsprite32292"],
+    "debugger": {
+      "dbg_control": "CheckTalentUse logpoint: 19214 lines, ctu #1 to #19227, rising in every window S2 to S6; instrument proven by the frame counter (7666 to 7774 before arming, no answer at the control hold, 7959 after).",
+      "dbg_ground_draw": "LootGroundDraw logpoint, every hit logged: 0 before the spawn, 353 right after the second warp, 745 about 5 s later, 2099 when cleared.",
+      "dbg_stat_site": "Direct DrawInventoryStatsNew call in the tooltip pass: S3 0 to 1, S4 flat at 1 over 5 s (control +390), S5 10 to 11, S6 15 to 16, each the same +1 as tip-armed; 11 to 15 over the four equips from other items' tooltips, tip flat."
+    },
+    "counters_per_hover": {
+      "s3_ground": "tip, tip-armed, typeline 0 to 1; typeline-miss 0; tip-cached 0 to 49; typeline-hook=in",
+      "s4_rest_5s": "tip-armed 1 unchanged; tip-cached 49 to 2239",
+      "s5_bag_none_worn": "tip, tip-armed, typeline 10 to 11; typeline-miss 0; tip-cached 3644 to 3759",
+      "s6_worn_switch_off": "tip, tip-armed, typeline 11 to 12; typeline-miss 0; tip-cached 5324 to 5448",
+      "s7_worn_switch_on": "bonus=on active=yes install=installed set=full; tip 13, tip-cached 9877"
+    },
+    "layout": "The description wrapped at 478 over four rows; every row inside the box in S3, S5, S6 and S7.",
+    "life_observation": "Life 4374 / 4374 at S1, 4108 with the Helmet worn, 3833 with all four; 3833 before mark1set bonus 1, 3360 just after, 3779 about 5 s after, 645 about 30 s after bonus 0, in town, damage meter 526 020. Cause not read.",
+    "source": "ForgePact docs/mark1-set-research.md (Mod live 10 results); docs/RUNTIME_DATA_MODELS.md 16.6, 16.12, 23.7; forgepact-166-mark1-set-tooltip-live-2.md, not tracked"
+  },
+  "playtest2": {
+    "live1": {
+      "status": "measured",
+      "date": "2026-10-22",
+      "procedure": "Stats live procedure 1 of the 2026-10-22 playtest (ForgePact#166): the rolled pieces, the set bonus, the tooltip, the priority cycle, held input, and the proc route against the press route, on save slot 14 Sorak (White Mage) in town, 12:43 to 14:52 UTC, with the hub's x64dbg MCP attached from D1 (after S2) to after D3; saves restored clean at the end.",
+      "research_dll_sha256": "c5f3376b9e5d42f939d300d7cdd5a33a1017f06901b20692a134806be57eefe1",
+      "forgepact_commit": "13c9c1b",
+      "summary": "61 checks: 40 pass, 8 fail, 9 not-observed, 4 not-run. Validity 5 of 5 pass; acceptance 9 pass, 5 fail (bonus-3, ms-applies, prio-order, lock-key, icon-grey), 3 not-observed (tip-lit, bonus-2, bonus-4); research 26 pass, 3 fail, 6 not-observed, 4 not-run.",
+      "bar": "row 0: 0,0 darkOath (242), 0,2 chainOfHolyLight (250, the right button), 0,3 manaOrb (253, Q), 0,4 healingZone (252, E), 0,5 soulSpurn (240, R, a toggle), 0,6 shadowBolt (239, Y, bound by the owner by hand during D3); auto talents=253/252/240/239 free=0/0/-/1; abilityCooldown 6, 14, 0.25, 0.25 at game speed 144",
+      "checks": {
+        "dll-hash": {
+          "verdict": "pass",
+          "observed": "lease dll_sha256 c5f3376b9e5d42f939d300d7cdd5a33a1017f06901b20692a134806be57eefe1"
+        },
+        "control": {
+          "verdict": "pass",
+          "observed": "pong (YYTK 4.0.1)"
+        },
+        "marker": {
+          "verdict": "pass",
+          "observed": "all as expected; dressed=0 legacy=0"
+        },
+        "dbg-control": {
+          "verdict": "pass",
+          "observed": "pm #698 at arm to pm #452325 at D3 end; instrument proven true"
+        },
+        "proc-control": {
+          "verdict": "pass",
+          "observed": "239 line self=Player_obj argc=10 a0=real:239 and 252 line a0=real:252 (second press, after the verbose budget ran out); casts=239:1,252:1"
+        },
+        "roll-spawn": {
+          "verdict": "pass",
+          "observed": "exactly those four; dressed 0 to 4"
+        },
+        "roll-lines": {
+          "verdict": "pass",
+          "observed": "all listed lines and Sockets (2)/(4) present, each with a Defense header"
+        },
+        "tip-order": {
+          "verdict": "pass",
+          "observed": "that order on all four pieces"
+        },
+        "tip-layout": {
+          "verdict": "pass",
+          "observed": "no cut or overlapping rows (the cursor sprite covers some text in shots)"
+        },
+        "tip-lit": {
+          "verdict": "not-observed",
+          "observed": "S5 and S7 as expected; no hover taken at S6",
+          "note": "S6 hover missing"
+        },
+        "desc-font": {
+          "verdict": "pass",
+          "observed": "tip desc-font=small; about 17 px vs 22 px cap height"
+        },
+        "ms-line": {
+          "verdict": "pass",
+          "observed": "own row; description has no \"half speed\""
+        },
+        "bonus-2": {
+          "verdict": "not-observed",
+          "observed": "pieces=2 lit=1/0/0; other ids unchanged; 92 never read (92=-)",
+          "note": "92's answer unread"
+        },
+        "bonus-3": {
+          "verdict": "fail",
+          "observed": "pieces=3 lit=1/1/0; 161 266 to 301 (+35); 38 46 to 46 (+0)",
+          "note": "38 not raised at S6 (read 159 to 184 at S7)"
+        },
+        "bonus-4": {
+          "verdict": "not-observed",
+          "observed": "lit as expected, 2 28 to 33, 36 4901 to 5651, HUD max 5651 and 4901; 97 never read (97=-)",
+          "note": "97's answer unread"
+        },
+        "bonus-off": {
+          "verdict": "pass",
+          "observed": "all equal; answered=0/185/457/455/50/0 at both reads 5 s apart"
+        },
+        "ms-applies": {
+          "verdict": "fail",
+          "observed": "mode 0.775/2.385 = 0.325, mean 0.329; effect[199] read 0.65, never 1"
+        },
+        "prio-order": {
+          "verdict": "fail",
+          "observed": "landed Q +0, E +2, R +0 (toggle on), Y +72; free=0/0/-/1; casts 239:72 and 252:2 equal landed",
+          "note": "Q (manaOrb, cooldown 6) did not land in the window"
+        },
+        "roll-save": {
+          "verdict": "pass",
+          "observed": "dressed=8; all four pieces with S4 values, helmet with gem lines merged"
+        },
+        "lock-key": {
+          "verdict": "fail",
+          "observed": "off: 253 casts 0, landed +0; on: 253 casts 1, landed +1, locked 0 to 576",
+          "note": "control window did not show key casts landing in the yield"
+        },
+        "icon-grey": {
+          "verdict": "fail",
+          "observed": "grey=4 grey-box=0 with 4 automated columns; E 17.8 vs 46.1 and Y 14.8 vs 40.6 darker; R 54.4 vs 54.4 and Q 44.9 vs 46.2 not darker; nothing outside the bar",
+          "note": "R and Q icons not darker"
+        },
+        "icon-clear": {
+          "verdict": "pass",
+          "observed": "grey=0 grey-box=0; normal look at 18 s (E dark at 2.5 s during its cooldown)"
+        },
+        "dbg-maxlife": {
+          "verdict": "pass",
+          "observed": "about 1.0/s idle (10 in 10.26 s); +4 in 3.6 s over gloves off; +16 in 15 s over gloves on"
+        },
+        "dbg-allres": {
+          "verdict": "pass",
+          "observed": "about 2.0/s idle (20 in 10.26 s); +10 in 3.6 s; +48 in 15 s after re-equip"
+        },
+        "dbg-fireres": {
+          "verdict": "not-observed",
+          "observed": "0 hits over D1..D2 while pm logged 25k+"
+        },
+        "def-header": {
+          "verdict": "pass",
+          "observed": "Defense: 224 [80] [26-38]"
+        },
+        "desc-match": {
+          "verdict": "pass",
+          "observed": "same letter height and line pitch (crops)"
+        },
+        "desc-view": {
+          "verdict": "pass",
+          "observed": "both ALT views identical with ranges and description shown; Options Gameplay Show Item Information on"
+        },
+        "piece-sheet": {
+          "verdict": "fail",
+          "observed": "2 25 to 25, 161 240 to 236, 36 4374 to 4718 (pieces replaced worn items)"
+        },
+        "allres-route": {
+          "verdict": "not-observed",
+          "observed": "162 never read (162=-) either way"
+        },
+        "bonus-equip": {
+          "verdict": "fail",
+          "observed": "0.4 s after 5188 / 5651 (max unchanged) with pieces=3; about 7 s after 4520 / 4718; back to 5651 after re-equip",
+          "note": "max dropped later than 1 s and by 933"
+        },
+        "hold-cadence": {
+          "verdict": "pass",
+          "observed": "casts=239:24 in 10 s; about 62 frames between casts"
+        },
+        "free-cadence": {
+          "verdict": "pass",
+          "observed": "hold 4 239:26; hold 3 239:25"
+        },
+        "held-entry": {
+          "verdict": "pass",
+          "observed": "entries 2, 27, 40: 1 to 4 then 4 to 3"
+        },
+        "held-blocks": {
+          "verdict": "pass",
+          "observed": "landings Q0 E1 R0 Y20; 250 cast 18"
+        },
+        "held-mask": {
+          "verdict": "pass",
+          "observed": "mask default 0,1,2,7..11 (lacks 27, 40); landings Q0 E1 R0 Y21; 250 cast 1"
+        },
+        "held-continues": {
+          "verdict": "not-observed",
+          "observed": "250 cast 1 in the window; 3 s after switch off casts=none with no button held",
+          "note": "after-window run without the button held"
+        },
+        "proc-cast": {
+          "verdict": "pass",
+          "observed": "shapes A and B both cast 239 (effect 0 to 1) and 252 (zone seen) with TalentUse 0/0; B used"
+        },
+        "proc-cooldown": {
+          "verdict": "pass",
+          "observed": "control second key press cast nothing; after the proc the key press landed (casts=252:1)"
+        },
+        "proc-mana": {
+          "verdict": "not-run",
+          "observed": "five key casts 2352 to 2352 (control did not fall)",
+          "note": "instrument: HUD mana did not show key-cast cost"
+        },
+        "proc-level": {
+          "verdict": "pass",
+          "observed": "heal 17 = 17, augmentLevel 0 = 0, isProc false both; differing deltaTimer, destroyTimer, inviewCheck, trail_x, trail_y"
+        },
+        "proc-cd": {
+          "verdict": "pass",
+          "observed": "10.42 s vs sum 11.42 s (within 15%); the longer-of-two 10.94 s is closer"
+        },
+        "proc-auto": {
+          "verdict": "not-observed",
+          "observed": "route=proc procs 0 to 57 proc-fail=0; Y landed 48 (at least 37); HZ 3 calls; TalentUse 1 (an R press only); per-call spacing not printed",
+          "note": "HZ call spacing unread"
+        },
+        "proc-held": {
+          "verdict": "pass",
+          "observed": "procs 90 to 106; 250 cast 16"
+        },
+        "socket-fill": {
+          "verdict": "pass",
+          "observed": "green gem drawn in the helmet, gem stats merged into its lines, required level 26 to 67"
+        },
+        "dbg-manaregen": {
+          "verdict": "pass",
+          "observed": "idle 0 in 10.26 s; +20 over five Y casts (14.7 s)"
+        },
+        "dbg-maxmana": {
+          "verdict": "pass",
+          "observed": "idle +11 in 10.26 s; +14 over the cast window"
+        },
+        "dbg-manaupdate": {
+          "verdict": "pass",
+          "observed": "idle 0; +25 over five Y casts"
+        },
+        "proc-interval": {
+          "verdict": "pass",
+          "observed": "Q 5.0 s vs 4.69; E 10.0 s vs 10.94; Y 0.63 s vs 0.649"
+        },
+        "lock-click": {
+          "verdict": "not-observed",
+          "observed": "a left click on the icon opens the bar editor; no casts with lock off; lock-on window not run",
+          "note": "click opens the editor"
+        },
+        "lock-proc": {
+          "verdict": "pass",
+          "observed": "procs 106 to 119; 253 TalentUse casts 0"
+        },
+        "grey-enabled": {
+          "verdict": "pass",
+          "observed": "Q E R Y drawn dark; tooltip shows; click opens the editor as normal"
+        },
+        "grey-game": {
+          "verdict": "not-run",
+          "observed": "none seen failing its requirement",
+          "note": "no skill on the bar failing its requirement"
+        },
+        "cast-interval": {
+          "verdict": "pass",
+          "observed": "24 casts, 417 ms (fcr 106)"
+        },
+        "cast-interval-fcr": {
+          "verdict": "pass",
+          "observed": "30 casts, 333 ms"
+        },
+        "stat-read": {
+          "verdict": "fail",
+          "observed": "106 to 192 (+86), read with the switch on"
+        },
+        "interval-model": {
+          "verdict": "pass",
+          "observed": "0.858 s vs 0.973 s (13.4%, fcr as read); 18.9% with fcr 206",
+          "note": "within 15% only with the read fcr"
+        },
+        "regen-units": {
+          "verdict": "not-observed",
+          "observed": "mana at max 2352 before and after; 42=415",
+          "note": "mana stayed at max"
+        },
+        "drain-applies": {
+          "verdict": "not-run",
+          "observed": "G0 window reached max (983 to 2352); spending by key casts moved no HUD mana",
+          "note": "instrument: no way to keep mana below max"
+        },
+        "maxmana-applies": {
+          "verdict": "pass",
+          "observed": "n=3, 2352 x 0.4 = 940.8; HUD 940.80; 37 2352 to 940.8"
+        },
+        "drain-zero": {
+          "verdict": "not-run",
+          "observed": "not run",
+          "note": "drain-applies not passed"
+        }
+      },
+      "getter_rates": {
+        "what": "Debugger logpoints at each function's own address, beside a PlayerMovement control at about 73 a second.",
+        "StatMaxLife": "about 1/s idle (10 in 10.26 s); +4 in 3.6 s around a piece taken off; +16 in 15 s around it worn again",
+        "StatAllResistances": "about 2/s idle (20 in 10.26 s); +10 in 3.6 s; +48 in 15 s",
+        "StatFireResist": "0 over D1 to D2 (about 7 minutes) while the control logged more than 25,000: not observed",
+        "StatManaReplenish": "0 in a 10.26 s idle; +20 over five key casts in 14.7 s",
+        "StatMaxMana": "+11 in the idle; +14 over the casts",
+        "PlayerManaUpdate": "0 in the idle; +25 over the casts"
+      },
+      "dispatcher_ids_not_asked_in_town": [
+        21,
+        92,
+        97,
+        162,
+        163,
+        164,
+        165
+      ],
+      "numbers": {
+        "bonus_answers": "2: 28 to 33; 36: 4901 to 5651 (HUD max moved 4901 and 5651); 161: 266 to 301; 38: 159 to 184 at S7 (46 to 46 at S6, no call after the boots); 37 under cost maxmana: 2352 to 940.8 (HUD 941 / 940.80, n = 3)",
+        "arcane_167_original": "339 with the 161 answer off, 374 with it on",
+        "walk": "switch off mode 2.385 px/frame (mean 2.393, 298 samples); switch on mode 0.775 (mean 0.788, 295 samples); ratio 0.325 = 0.50 x 0.65; playerEffect[199] read 0.65 (briefly 0.670833), never 1",
+        "cadence": "Shadow Bolt key held 10 s: 24 casts (about 62 frames, 417 ms) at fcr 106; 30 casts (333 ms) with castrate +100; automated 10 s: 26 casts at hold 4, 25 at hold 3; gate calls 149/s",
+        "healing_zone_key_interval": "3 casts over 31.25 s held = 10.42 s; model cooldown 14 / 1.28 = 10.94 s, cast 1 / 2.06 = 0.485 s, sum 11.42 s",
+        "proc_interval": "mean spacing over 30.05 s: Q 5.0 s (computed 4.69), E 10.0 s (10.94), Y 0.63 s (0.649); procs 0 to 57, proc-fail 0",
+        "icon_luminance": "slot boxes darkOath, Q, E, R, Y: switch on [42.0, 44.9, 17.8, 54.4, 14.8]; off 2.5 s [42.0, 46.3, 20.4, 54.4, 40.6]; off 18 s [42.2, 46.2, 46.1, 54.4, 40.6]",
+        "mana": "983 to 2352 (maximum) within 10 s; five key casts left 2352 / 2352; id 42 original 415, id 37 original 2352",
+        "fcr_reads": [
+          55,
+          106,
+          54,
+          68,
+          106,
+          56,
+          57,
+          70,
+          102,
+          106,
+          192,
+          55,
+          54
+        ],
+        "held_input": "right button: inputState entries 2, 27, 40 read 4 for one frame then 3; mask off: landings Q0 E1 R0 Y20, 250 cast 18; default mask: Q0 E1 R0 Y21, 250 cast 1"
+      },
+      "source": "ForgePact docs/mark1-set-research.md (Stats live 1 results, Stats live 1 decision); docs/RUNTIME_DATA_MODELS.md 7.3, 7.9, 7.10, 16.6, 16.13; forgepact-166-mark1-set-playtest2-live-1.md, not tracked"
+    },
+    "live2": {
+      "status": "measured",
+      "date": "2026-10-22",
+      "procedure": "Stats live procedure 2 of the 2026-10-22 playtest (ForgePact#166), as amended after its first attempt (the set's hooks before any probe hook, no logpoint on the dispatcher, getter lines attributed by self): the re-checks of Stats live 1, the roll ranges, the set bonus game-side, the proc route and the mana instrument, on save slot 14 Sorak (White Mage), attempt 2 19:06 to 19:32 UTC, with the hub's x64dbg MCP attached from D1 (after S2) to D2 (after S5c); saves restored clean at the end. The first attempt stopped at S3 (the set's install refused after mark1probe hook) and is not counted.",
+      "research_dll_sha256": "aaca2ac449217760acdff260eccb7ec079327216fae96e3838b262c4b810d0b2",
+      "forgepact_commit": "dd14209",
+      "summary": "40 checks: 34 pass, 1 fail, 5 not-observed. Validity 7 of 7 pass (4 required); acceptance 15 pass, 3 not-observed (bonus-2, bonus-4, proc-casts: one part each); research 12 pass, 1 fail (stat-read), 2 not-observed (bonus-equip, drain-below).",
+      "bar": "row 0: 0,0 darkOath (242), 0,2 chainOfHolyLight (250, the right button), 0,3 manaOrb (253, Q), 0,4 healingZone (252, E), 0,5 soulSpurn (240, R, a toggle), 0,6 shadowBolt (239, Y, bound by the operator through the bar editor at S0); auto talents=253/252/240/239 free=0/0/-/1; Mana Orb unbound from Q at S14",
+      "checks": {
+        "dll-hash": {"verdict": "pass", "observed": "lease dll_sha256 aaca2ac449217760acdff260eccb7ec079327216fae96e3838b262c4b810d0b2"},
+        "control": {"verdict": "pass", "observed": "pong (YYTK 4.0.1)"},
+        "marker": {"verdict": "pass", "observed": "research build; hold=4 yield=61 rest=24 mask=0,1,2,7,8,9,10,11,27,40 route=proc procs=0 proc-fail=0 locked=0 cost=maxmana cast-base=0.86 grey=0 grey-box=0; S0b install=installed, no refused line"},
+        "proc-control": {"verdict": "pass", "observed": "mark1probe hook: 15 detoured, 0 failed, 5 held; TalentUse and PlayerMovement installed; one TalentUseClass line self Player_obj a0 239; casts=239:1"},
+        "dbg-control": {"verdict": "pass", "observed": "647 lines over a 10 s idle at a 15 ms baseline; logging through every window; instrument proven by the frame counter (24020 to 24164, no answer at the hold, 24383)"},
+        "dbg-getters": {"verdict": "pass", "observed": "statask 92,97 logged one df and one pd line with one self (town reference); in Act_01_01 a new self (that room's reference)"},
+        "game-control": {"verdict": "pass", "observed": "36 record 4901->5651 after the switch went on, in S5b and in S5c"},
+        "ranges": {"verdict": "pass", "observed": "all 13 rolled-line ranges with matching stat id, colour 8421504, same row, right of the label; 48, 170, 51 none"},
+        "range-header": {"verdict": "pass", "observed": "headers [60-80] [210-240] [72-90] [46-68]; sockets [1-2] [3-4]; none of the stand-ins' ranges"},
+        "roll-lines": {"verdict": "pass", "observed": "Defense 224, 913, 270, 136; every top-roll line and Sockets (2)/(4)"},
+        "tip-order": {"verdict": "pass", "observed": "that order in all four journal records; every row inside the box"},
+        "tip-lit": {"verdict": "pass", "observed": "2, 3 and 4 pieces lit as designed, names green as worn"},
+        "bonus-2": {"verdict": "not-observed", "observed": "arithmetic 92 6436 -> 6936, pieces=2 lit=1/0/0; 92 record X->X after S3, S5b, S5c; every df line in those windows had a non-reference self", "note": "game-side part not observed: asked by other instances only"},
+        "bonus-3": {"verdict": "pass", "observed": "38 46->71, 161 266->301, pieces=3 lit=1/1/0"},
+        "bonus-4": {"verdict": "not-observed", "observed": "arithmetic 2 28->33, 36 4901->5651, 97 21->41, pieces=4 lit=1/1/1 active=yes, HUD max 4901 -> 5651; 97 record 21->21 after S5b and S5c, pd lines with other selves only", "note": "id-97 game-side part not observed"},
+        "ms-applies": {"verdict": "pass", "observed": "mode 2.385 off, 1.192 on (0.4998); movers 154 and 158"},
+        "prio-order": {"verdict": "pass", "observed": "Q=8 E=4 Y=69 R=- in 30 s; R pressed only when off; proc-fail=0"},
+        "proc-casts": {"verdict": "not-observed", "observed": "three TalentUseClass lines self Player_obj, a1 ref (kind 15) to the player; TalentUse casts=none; healingZone effect=1 in every read, the nearest 4 to 6 s after an E proc", "note": "the within-1-s read was not caught (polls 7 to 12 s apart); not re-run"},
+        "free-continuous": {"verdict": "pass", "observed": "N_hold 21, N_auto 20 (16.8 needed)"},
+        "held-procs": {"verdict": "pass", "observed": "Y 17 procs in the 8 s hold (12.8 needed)"},
+        "held-continues": {"verdict": "pass", "observed": "casts=250:16 (Chain of Holy Light)"},
+        "lock-key": {"verdict": "pass", "observed": "lockout off casts=239:9; on casts=none, locked 0->576, procs 886->908"},
+        "icon-grey": {"verdict": "pass", "observed": "luminance on 23.0/15.7/17.0/14.1 vs off 79.4/43.0/45.7/36.5; grey=4; procs 908->942"},
+        "icon-clear": {"verdict": "pass", "observed": "grey=0, every slot brighter, Shadow Bolt tooltip on hover"},
+        "maxmana-applies": {"verdict": "pass", "observed": "n=3: HUD 941 / 940.80, statask 37 940.8 = 2352 x 0.4"},
+        "allres-route": {"verdict": "pass", "observed": "162 83 -> 83 with the switch off and on (161 266 -> 301); 164 also 83", "note": "research, recorded: unchanged; a cap not excluded, so whether 162 adds 161 is not established"},
+        "piece-sheet": {"verdict": "pass", "observed": "helmet off: 2 28->25, 161 266->236, 36 4901->4581"},
+        "bonus-equip": {"verdict": "not-observed", "observed": "36 drops 933 (on) and 183 (off), 933 = 183 + 750; HUD max old at 0.4/0.9 s, new by about 5/7 s; no shot at 1.5 or 3 s", "note": "the 3 s HUD timing was not captured; not re-run"},
+        "ms-cast": {"verdict": "pass", "observed": "no hold: mode 1.278 (0.536 of 2.385); playerEffect[199] 0.65 with the switch on; 42 movers; watch line-capped at 135 frames", "note": "research, recorded"},
+        "proc-interval": {"verdict": "pass", "observed": "min/mean vs interval: Q 5246/5250 vs 5246; E 11497/11499 vs 11496; Y 558/562 vs 558 ms"},
+        "proc-stack": {"verdict": "pass", "observed": "manaOrb effect=7 at the S8 window end", "note": "research, recorded: several"},
+        "stat-read": {"verdict": "fail", "observed": "statask 106 55 x3 -> 158 x3 after statadd castrate 100 (+103); the plain 106 moved between windows (55, 85, 106)", "note": "the reads were seconds apart; Stats live 3 reads them in one command file"},
+        "cast-base": {"verdict": "pass", "observed": "0.860 (F 158, 30 casts) and 0.771 (F 85, 24 casts), 10.3% apart"},
+        "mana-control": {"verdict": "pass", "observed": "manaregen 0, Y held 10 s: 2352 -> 1428 (39.3%)"},
+        "regen-zero": {"verdict": "pass", "observed": "1428 -> 1428 over 5 s"},
+        "toggle-drain": {"verdict": "pass", "observed": "D0 = 0 over 10 s idle", "note": "research, recorded"},
+        "proc-mana": {"verdict": "pass", "observed": "Dq 0, Dp 1219 (51.8%)", "note": "research, recorded as free"},
+        "regen-units": {"verdict": "pass", "observed": "R 257: 676 mana in 2.98 s from HUD crops, 0.883 per unit per second", "note": "research, recorded"},
+        "drain-applies": {"verdict": "pass", "observed": "autodrain 2.73 (n=2): 42=128.581 (0.4 R to 0.6 R = 102.8 to 154.2); 3 s gain 338 vs 507 allowed"},
+        "drain-below": {"verdict": "not-observed", "observed": "manaregen -257: 2352 -> 2352, the window began at the maximum", "note": "instrument: neither outcome measurable"}
+      },
+      "dispatcher_askers": {
+        "what": "x64dbg logpoints at StatDefense (df) and StatPhysicalDamageReduction (pd), each logging its self, beside a PlayerMovement control.",
+        "town_reference": "only our statask calls carried the reference self",
+        "sheet": "each opening of the talent screen (T): two fresh selves, 92 twice and 97 three times",
+        "outskirts": "one non-reference self: 92 about every 344 control hits, 97 in pairs",
+        "bonusread": "92 and 97 records X->X in every window; 36 X->X+750 (game-control)"
+      },
+      "numbers": {
+        "bonus_answers": "92: 6436 to 6936 (2 pieces); 38: 46 to 71, 161: 266 to 301, 162: 83 to 83 (3 pieces); 2: 28 to 33, 36: 4901 to 5651, 97: 21 to 41 (4 pieces); 37 under cost maxmana: 2352 to 940.8 (n = 3)",
+        "sheet_life": "the talent screen showed Life 4901 while the HUD read 5651 with the 36 answer on",
+        "walk": "hold at playerEffect[199] 1: off mode 2.385, on 1.192 (0.4998); no hold, on: 1.278 with playerEffect[199] 0.65",
+        "proc_interval_ms": "Q 5246, E 11496, Y 558 at fcr 54, haste 56",
+        "fcr_reads": "stat line fcr 54, 54, 80; statask 106: 55, 158 (castrate 100), 85, 106",
+        "mana": "maximum 2352; Y held 10 s spent 924 with regen 0; press-route automation spent 1219 in 10 s; proc route spent 0",
+        "regen": "R 257: 676 in 2.98 s (0.883 per unit per second, HUD crops); answer 128.581: 338 in 2.97 s"
+      },
+      "source": "ForgePact docs/mark1-set-research.md (Stats live 2 results, Stats live 2 decision); docs/RUNTIME_DATA_MODELS.md 16.13; forgepact-166-mark1-set-playtest2-live-2.md (Attempt 2), not tracked"
+    },
+    "live3": {
+      "status": "measured",
+      "date": "2026-10-23",
+      "procedure": "Stats live procedure 3 of the 2026-10-22 playtest (ForgePact#166): who asks for Defense (92) and PDR (97) when the player is struck, the other asker's object, the character sheet's answered askers and the mercenary's page, the shipped mana drain from below the maximum, a replenish below zero, the replenish unit in process, and stat-read in one command file, on save slot 14 Sorak (White Mage) with Mana Orb (Q) and Soul Spurn (R) unbound, 07:11 to 07:27 UTC, with the hub's x64dbg MCP attached from D1 (after S2) to D2 (before S4); saves restored clean at the end.",
+      "research_dll_sha256": "d265cb6571c30e1ae4bd4b51b3da6c89376cf51bfb3d1d6e40fa3e9e23472531",
+      "forgepact_commit": "6545891",
+      "summary": "21 checks: 17 pass, 2 fail, 2 not-observed. Required 10 of 10 pass; validity dbg-getters and hit-control pass; research 5 pass, 2 fail (merc-page, stat-read), 2 not-observed (bonus-def-hit, bonus-pdr-hit).",
+      "bar": "row 0: 0,0 darkOath (242), 0,2 chainOfHolyLight (250, the right button), 0,4 healingZone (252, E), 0,6 shadowBolt (239, Y); Mana Orb (Q) and Soul Spurn (R) unbound by the operator through the bar editor at S0; auto talents=-/252/-/239 free=-/0/-/1",
+      "checks": {
+        "dll-hash": {"verdict": "pass", "observed": "lease dll_sha256 d265cb6571c30e1ae4bd4b51b3da6c89376cf51bfb3d1d6e40fa3e9e23472531"},
+        "control": {"verdict": "pass", "observed": "pong (YYTK 4.0.1)"},
+        "marker": {"verdict": "pass", "observed": "research build; route=proc cost=drain drain=1.00 drained=0 sheet=0; S0b install=installed, no refused line"},
+        "dbg-control": {"verdict": "pass", "observed": "777 lines over a 10 s idle at a 13.0 ms baseline; logging through every window; instrument proven by the frame counter (29325 to 29434, no answer at the hold, 29671)"},
+        "vitals-control": {"verdict": "pass", "observed": "vitals 4374/4374 and 3341/3341 against statask 36=4374 37=3341; manaregen 0 -> 42=0; Y held 10 s: mana 3341 -> 1937 (-42.0%)"},
+        "others-control": {"verdict": "pass", "observed": "switch off, the sheet's bonusothers: 25 entries"},
+        "no-leak": {"verdict": "pass", "observed": "every Mercenary_obj, Companion_obj, Controller_obj, White_Mage_Healing_Zone_obj, Legion_Skeleton(_Archer)_Passive_obj, Spider_Passive_obj and Zombie_Passive_obj entry X->X; only UI_Talent_Screen_Attribute_obj and UI_Button_Talent_Player_obj differed"},
+        "sheet-life": {"verdict": "pass", "observed": "36:UI_Talent_Screen_Attribute_obj 4901->5651 on, 4901->4901 off"},
+        "sheet-defense": {"verdict": "pass", "observed": "92:UI_Talent_Screen_Attribute_obj 7056->7556, 97: 21->41"},
+        "drain-default": {"verdict": "pass", "observed": "M 2352, R 140, n 2: 37 2352 off and on; 42 on 92.96 (expected 92.96); cost=drain drain=1.00 drained=42 (S0 0)"},
+        "dbg-getters": {"verdict": "pass", "observed": "statask 92,97: one df and one pd line with one self in town, a new self in Act_01_01"},
+        "hit-control": {"verdict": "pass", "observed": "S3a: 4 hu (sc_hurt) lines with the room's reference self; S3b none"},
+        "bonus-def-hit": {"verdict": "not-observed", "observed": "no df line with the reference self in S3a or S3b; S3b's 67 df lines carried another self", "note": "research"},
+        "bonus-pdr-hit": {"verdict": "not-observed", "observed": "S3a: 4 pd with the reference self after each hu, 97 21->21 at two pieces (as designed); S3b: no hit, 14 pd with another self", "note": "research"},
+        "other-object": {"verdict": "pass", "observed": "92 and 97: Mercenary_obj (92*69, 97*14 against S3b's 67 df and 14 pd with that self); 36: Legion_Skeleton_Archer_Passive_obj, Legion_Skeleton_Passive_obj, Spider_Passive_obj, Zombie_Passive_obj; 64: Companion_obj, Mercenary_obj; every non-player a0=1", "note": "research, recorded"},
+        "merc-page": {"verdict": "fail", "observed": "the talent screen's Mercenary tab, switch on: UI_Talent_Screen_Attribute_obj 36 12527->13277, 92 5114->5614, 97 86->106, 38 886->911, 161 140->175, 42 31->-16.04; UI_Button_Talent_Player_obj 2 0->5; the page showed Life 13277, Mana Replenish -16.04", "note": "research: the bonus and the cost reach the mercenary's page on the sheet; the mercenary's own calls stayed X->X"},
+        "sheet-view": {"verdict": "pass", "observed": "Base Stats Life 5651 = statask 36; Defensive tab (hover, then a held left click at 744,544): Defense 7556 = 92, PDR 41% = 97", "note": "research"},
+        "regen-units": {"verdict": "pass", "observed": "R 140, switch off: 154 mana in 1258 ms, 122.417 a second, 0.874 per unit", "note": "research, recorded; read in process (mark1probe vitals)"},
+        "drain-rate": {"verdict": "pass", "observed": "switch on (42 = 92.96): 87.37 a second against 81.29 expected (+7.5%)", "note": "research"},
+        "drain-below": {"verdict": "pass", "observed": "manaregen -140 from 1428/2352: -518 (-22.0%) in 4173 ms, -124.131 a second; drains", "note": "research, recorded; a first attempt from the maximum is not counted"},
+        "stat-read": {"verdict": "fail", "observed": "one command file: 106 54, 158 after statadd castrate 100 (first boosted call 52 -> 152), 54 after castrate 0; +104 against 100 +- 2", "note": "research"}
+      },
+      "dispatcher_askers": {
+        "what": "x64dbg logpoints at StatDefense (df), StatPhysicalDamageReduction (pd) and sc_hurt (hu), each logging its self, beside a PlayerMovement control; Mark 1's bonusothers recorder naming each non-player asker's object and argument 0.",
+        "struck": "S3a: four sc_hurt calls with the player's self, each followed by a PDR (97) ask with the player's self; no Defense (92) ask with the player's self in either window",
+        "outside_town": "Mercenary_obj asks 92 and 97 (the non-player self of Stats live 2); summons' and pets' passives ask 36; Companion_obj and Mercenary_obj ask 64",
+        "sheet": "Player tab: UI_Talent_Screen_Attribute_obj asks 2, 21, 36, 37, 38, 42, 64, 92, 97, 103, 106, 161 to 165, 167; UI_Button_Talent_Player_obj asks 2; Mercenary tab: the same objects ask for the mercenary's stats, Load_Mana_Costs_obj asks 2; UI_Talent_Screen_Allocate_obj and Player_Talent_Tooltip_obj not seen asking",
+        "argument_0": "1 on every non-player asker recorded, the player's sheet, the mercenary and the passives alike; the player's own calls' argument 0 was not recorded"
+      },
+      "numbers": {
+        "sheet": "switch on: Life 5651, Defense 7556, PDR 41% (equal to statask); switch off: Life 4901",
+        "mercenary_page": "switch on: Life 12527 -> 13277, Defense 5114 -> 5614, PDR 86 -> 106, Mana Replenish 31 -> -16.04",
+        "drain": "M 2352, R 140, n 2: 42 answered 92.96; mana regen 122.417 a second off, 87.37 on (81.29 expected)",
+        "replenish_unit": "0.874 mana a second per unit of id 42 (in process; Stats live 2's HUD crops 0.883); S7 minus S8 reads 0.745 mana a second per drained unit (35.05 over 47.04), the value kMark1ReplenishUnit adopts",
+        "below_zero": "42 forced to -140: -124.131 mana a second from 1428",
+        "fcr_reads": "statask 106: 54, 158 (castrate 100), 54"
+      },
+      "source": "ForgePact docs/mark1-set-research.md (Stats live 3 results, Stats live 3 decision); docs/RUNTIME_DATA_MODELS.md 16.13; forgepact-166-mark1-set-playtest2-live-3.md, not tracked"
+    },
+    "live4": {
+      "status": "measured",
+      "date": "2026-10-23",
+      "procedure": "Stats live procedure 4 of the 2026-10-22 playtest (ForgePact#166): the talent screen's page rule on the Player and Mercenary tabs, and the dispatcher's Defense (92) and PDR (97) asked with the player's own self while struck, four pieces worn and the switch on, on save slot 14 Sorak (White Mage) with Mana Orb (Q) and Soul Spurn (R) unbound, 08:04 to 08:16 UTC, with the hub's x64dbg MCP attached from D1 (after S3) to D2 (before S7); saves restored clean at the end.",
+      "research_dll_sha256": "56b8739b51a325065606207f3a83b0b4af168347beb77b3659d2c33837df7aa7",
+      "forgepact_commit": "b44c1e3",
+      "summary": "15 checks: 14 pass, 1 fail. Required 10 of 10 pass; validity dbg-getters and hit-control pass, merc-away fail (not attempted: the session's permission classifier refused the click on Discharge Mercenary; not a game result); research bonus-def-hit and bonus-pdr-hit pass.",
+      "bar": "row 0: 0,0 darkOath, 0,2 chainOfHolyLight, 0,4 healingZone (252, E); Mana Orb (Q) and Soul Spurn (R) unbound by the operator through the bar editor at S0, Y empty; auto talents=-/252/-/- free=-/0/-/-",
+      "checks": {
+        "dll-hash": {
+          "verdict": "pass",
+          "observed": "lease dll_sha256 56b8739b51a325065606207f3a83b0b4af168347beb77b3659d2c33837df7aa7"
+        },
+        "control": {
+          "verdict": "pass",
+          "observed": "pong (YYTK 4.0.1)"
+        },
+        "marker": {
+          "verdict": "pass",
+          "observed": "research build; cost=drain drain=1.00 drained=0 sheet=0 sheet-left=0 sheet-unread=0; S0b install=installed, no refused line"
+        },
+        "dbg-control": {
+          "verdict": "pass",
+          "observed": "797 lines over a 10 s idle at a 12.6 ms baseline; instrument proven by the frame counter (38143 to 38287, no answer at the hold, 38470); silent once after a single-step exception, re-enabled before any candidate reading, logging through every later window"
+        },
+        "others-control": {
+          "verdict": "pass",
+          "observed": "switch off, the sheet's bonusothers: 26 entries"
+        },
+        "no-leak": {
+          "verdict": "pass",
+          "observed": "every Mercenary_obj, Companion_obj, White_Mage_Healing_Zone_obj, Zombie_Passive_obj, Legion_Skeleton(_Archer)_Passive_obj and Controller_obj entry of S2, S3 and S6 X->X"
+        },
+        "sheet-life": {
+          "verdict": "pass",
+          "observed": "36:UI_Talent_Screen_Attribute_obj 4901->5651 on, 4901->4901 off"
+        },
+        "sheet-defense": {
+          "verdict": "pass",
+          "observed": "92:UI_Talent_Screen_Attribute_obj 7056->7556, 97: 21->41; Defensive sub-tab Defense 7556, PDR 41%"
+        },
+        "merc-page": {
+          "verdict": "pass",
+          "observed": "Mercenary page (Life 12527); every talent-screen entry X->X: 36 12527, 92 5114, 97 86, 42 31, 2:UI_Button_Talent_Player_obj 0; sheet-left 34 -> 14713"
+        },
+        "page-back": {
+          "verdict": "pass",
+          "observed": "Player page again after 2 s on the Mercenary tab; 36:UI_Talent_Screen_Attribute_obj 4901->5651"
+        },
+        "dbg-getters": {
+          "verdict": "pass",
+          "observed": "statask 92,97: one df and one pd line with one self in town and with a new self on arrival in Outskirts of Inoya"
+        },
+        "merc-away": {
+          "verdict": "fail",
+          "observed": "not attempted: the Discharge Mercenary button was found on the Mercenary page, the click was refused by the session's permission classifier before it was sent; S6 bonusothers still lists Mercenary_obj; not a game result"
+        },
+        "hit-control": {
+          "verdict": "pass",
+          "observed": "S6: four sc_hurt (hu) lines with the room's reference self"
+        },
+        "bonus-def-hit": {
+          "verdict": "pass",
+          "observed": "one df line with the reference self in S6 (not next to a hu line) while bonusread 92=7056->7556"
+        },
+        "bonus-pdr-hit": {
+          "verdict": "pass",
+          "observed": "four pd lines with the reference self in S6, each right after a hu line, while bonusread 97=21->41"
+        }
+      },
+      "dispatcher_askers": {
+        "struck": "S6, four pieces, switch on: four sc_hurt calls with the player's self, each followed by a PDR (97) ask with the player's self; one Defense (92) ask with the player's self in the window, not next to a hit",
+        "other_self": "25 df and 6 pd lines with one other self in S6, beside Mercenary_obj 92 and 97 asks in bonusothers (31 and 8), left as the game answered them",
+        "sheet_pages": "Mercenary tab: talent-screen asks left at the game's values; Player tab again: answered"
+      },
+      "observed_not_explained": [
+        "S1 switch off: set=full on the first line, pieces=0 on the second (pieces=4 with the switch on)",
+        "sheet-left=34 at the end of S2, before any Mercenary tab; sheet=28199 there",
+        "S3a: sheet rose 28199 -> 31808 while sheet-left rose 34 -> 14713",
+        "S3b: sheet-left rose 14713 -> 22746, but bonusothers listed no talent-screen entry with the mercenary's originals",
+        "id 38's original read 49 in S5's bonusread and 140 in S6's (answered 74 and 165)"
+      ],
+      "source": "ForgePact docs/mark1-set-research.md (Stats live 4 results, Stats live 4 decision); docs/RUNTIME_DATA_MODELS.md 16.13; forgepact-166-mark1-set-playtest2-live-4.md, not tracked"
+    },
+    "live5": {
+      "status": "measured",
+      "date": "2026-10-23",
+      "procedure": "Stats live procedure 5 of the 2026-10-22 playtest (ForgePact#166): the player's mana regen tick at the game's frame rate as found (about 144) and at 60, and the Mark 1 drain's measured share at the shipped unit 0.745, on save slot 14 Sorak (White Mage) with Mana Orb (Q) and Soul Spurn (R) unbound and Shadow Bolt bound to Y, mana read in process (mark1probe vitals), 10:11 to 10:49 UTC, with the hub's x64dbg MCP attached at D1 (default rate) and D2 (60); saves restored clean at the end.",
+      "research_dll_sha256": "f8e36e7701a6aaf1911cc0cb7eae23c1ad6661949155c79bf07cf394da21dc1c",
+      "forgepact_commit": "2d3e9dd",
+      "summary": "16 checks: 11 pass, 3 fail, 1 not-observed, 1 not-run. drain-pct pass at 1.117% (+/-0.005) of maximum mana a second per skill at unit 0.745; drain-capped 0.956% at 60; tick-shape pass (divisor 10 at both rates); regen-fps not-observed (r 0.856); fps-default fail against the Video page's disabled Framerate row (60) while the game ran 143.7 by its own counter (the owner dropped it from the required set, data kept); dbg-tick and dbg-replenish fail their rule at D1 because that window ran at about 60.5 frames a second, where the tick is slower (S7); one hit a tick by the gain in both debugger windows (both about 60 FPS).",
+      "bar": "row 0: 0,0 darkOath, 0,2 chainOfHolyLight, 0,4 healingZone (252, E), 0,6 shadowBolt (239, Y, bound by the operator); Mana Orb (Q) and Soul Spurn (R) unbound at S0; auto talents=-/252/-/239 free=-/0/-/1",
+      "fps_setting": "Video page: VSync Off, Framerate row 60 drawn dim (menulayout enabled=0 on both its buttons); the game's own counter 143-144. The owner capped the game at 60 (what was changed not stated; the page then showed VSync On, Framerate still 60 disabled, counter 60); the operator set VSync Off again in S9 (143.5 FPS).",
+      "checks": {
+        "dll-hash": {
+          "verdict": "pass",
+          "observed": "lease dll_sha256 f8e36e7701a6aaf1911cc0cb7eae23c1ad6661949155c79bf07cf394da21dc1c"
+        },
+        "control": {
+          "verdict": "pass",
+          "observed": "pong (YYTK 4.0.1)"
+        },
+        "marker": {
+          "verdict": "pass",
+          "observed": "research build; cost=drain drain=1.00 unit=0.745 drained=0; S0b install=installed, no refused line"
+        },
+        "zero-control": {
+          "verdict": "pass",
+          "observed": "manaregen 0 (statask 42=0): 600 frames, dt 4174 ms, mana-gain=0"
+        },
+        "fps-default": {
+          "verdict": "fail",
+          "observed": "600/4.174 = 143.7 FPS (perf 144.1) against the displayed Framerate 60, a disabled row; within 0.2% of 144, which the page did not show"
+        },
+        "tick-rate-default": {
+          "verdict": "pass",
+          "observed": "statask 42=1; gain 219 in 25.007 s, T 8.7575 ticks/s (+/-0.46%)"
+        },
+        "tick-shape": {
+          "verdict": "pass",
+          "observed": "off 308 vs 14 x T x dt = 307.37 (tol 20.15); on 176 vs 8 x T x dt = 175.85 (tol 11.52); R 140, R-D 76.8591"
+        },
+        "drain-pct": {
+          "verdict": "pass",
+          "observed": "a = 14 - 8 = 6 (p_off - p_on 6.02), T 8.7575, n 2, M 2352, unit 0.745: 1.117% +/-0.005"
+        },
+        "drain-tune": {
+          "verdict": "not-run",
+          "observed": "drain-pct in band; S5 not needed"
+        },
+        "fps-capped": {
+          "verdict": "pass",
+          "observed": "600/10.013 = 59.9 FPS (perf 16.66 ms = 60.0); the owner set the cap"
+        },
+        "tick-rate-capped": {
+          "verdict": "pass",
+          "observed": "statask 42=1; gain 225 in 30.008 s, T 7.498 ticks/s, 8.0 frames a tick"
+        },
+        "drain-capped": {
+          "verdict": "pass",
+          "observed": "d 10 (630 vs 631.41, tol 26.63), a 6 (p_off - p_on 5.99): 0.956%, ratio 0.856 to drain-pct; clock prediction 1.083-1.150 and frame-count 0.466 both not met"
+        },
+        "regen-fps": {
+          "verdict": "not-observed",
+          "observed": "d 10; r = 7.498/8.7575 = 0.856; frame band <= 0.479; 122.6 mana/s at the default, 105.0 at 60 (R 140)"
+        },
+        "dbg-control": {
+          "verdict": "pass",
+          "observed": "pm 609 per 10 s (D1), 571 (D2); instrument proven at both attaches by the frame counter"
+        },
+        "dbg-tick": {
+          "verdict": "fail",
+          "observed": "D1 (60.5 FPS under the debugger) tk 144-159 vs 1201 frames and 173.8 ticks by S3's T (0.83-0.91), 0.95-1.05 of the gain's 152 ticks; D2 tk 150-166 vs 157.8 (0.95-1.05), every tick"
+        },
+        "dbg-replenish": {
+          "verdict": "fail",
+          "observed": "D1 rp 144-159 (0.83-0.91 of S3's ticks, 0.95-1.05 of the gain's 152); D2 rp 150-166 vs 157.8 (0.95-1.05); gain/rp 13.4-14.8 (D1), 13.3-14.7 (D2)"
+        }
+      },
+      "numbers": {
+        "max_mana": 2352,
+        "replenish_answer": 140,
+        "proc_columns": 2,
+        "windows": [
+          {
+            "step": "S2",
+            "frame_rate": "about 144 (VSync off)",
+            "switch": "off",
+            "forced_answer": 0,
+            "frames": 600,
+            "ms": 4174,
+            "gain": 0,
+            "fps": 143.7,
+            "perf_ms_per_frame": 6.94
+          },
+          {
+            "step": "S3",
+            "frame_rate": "about 144 (VSync off)",
+            "switch": "off",
+            "forced_answer": 1,
+            "frames": 3601,
+            "ms": 25007,
+            "gain": 219,
+            "ticks": 219,
+            "per_tick": 1,
+            "ticks_per_s": 8.7575
+          },
+          {
+            "step": "S4 off",
+            "frame_rate": "about 144 (VSync off)",
+            "switch": "off",
+            "answer": 140,
+            "frames": 361,
+            "ms": 2507,
+            "gain": 308,
+            "ticks": 22,
+            "per_tick": 14,
+            "p": 14.03
+          },
+          {
+            "step": "S4 on",
+            "frame_rate": "about 144 (VSync off)",
+            "switch": "on",
+            "answer": 76.8591,
+            "drained_units": 63.1409,
+            "unit": 0.745,
+            "frames": 361,
+            "ms": 2510,
+            "gain": 176,
+            "ticks": 22,
+            "per_tick": 8,
+            "p": 8.01
+          },
+          {
+            "step": "D1",
+            "frame_rate": "about 144 (VSync off), about 60.5 FPS under the logpoints",
+            "switch": "off",
+            "answer": 140,
+            "frames": 1201,
+            "ms": 19849,
+            "gain": 2128,
+            "ticks": 152,
+            "per_tick": 14,
+            "pm_hits": [
+              1148,
+              1263
+            ],
+            "tk_hits": [
+              144,
+              159
+            ],
+            "rp_hits": [
+              144,
+              159
+            ]
+          },
+          {
+            "step": "S6",
+            "frame_rate": "60 (VSync on; Framerate row 60, disabled, as in every window)",
+            "switch": "off",
+            "forced_answer": 0,
+            "frames": 600,
+            "ms": 10013,
+            "gain": 0,
+            "fps": 59.9,
+            "perf_ms_per_frame": 16.66
+          },
+          {
+            "step": "S7",
+            "frame_rate": "60 (VSync on; Framerate row 60, disabled, as in every window)",
+            "switch": "off",
+            "forced_answer": 1,
+            "frames": 1801,
+            "ms": 30008,
+            "gain": 225,
+            "ticks": 225,
+            "per_tick": 1,
+            "ticks_per_s": 7.498
+          },
+          {
+            "step": "S8 off",
+            "frame_rate": "60 (VSync on; Framerate row 60, disabled, as in every window)",
+            "switch": "off",
+            "answer": 140,
+            "frames": 361,
+            "ms": 6015,
+            "gain": 630,
+            "ticks": 45,
+            "per_tick": 14,
+            "p": 13.97,
+            "divisor": 10
+          },
+          {
+            "step": "S8 on",
+            "frame_rate": "60 (VSync on; Framerate row 60, disabled, as in every window)",
+            "switch": "on",
+            "answer": 76.8591,
+            "drained_units": 63.1409,
+            "unit": 0.745,
+            "frames": 361,
+            "ms": 6016,
+            "gain": 360,
+            "ticks": 45,
+            "per_tick": 8,
+            "p": 7.98
+          },
+          {
+            "step": "D2",
+            "frame_rate": "60 (VSync on; Framerate row 60, disabled, as in every window)",
+            "switch": "off",
+            "answer": 140,
+            "frames": 1201,
+            "ms": 21051,
+            "gain": 2212,
+            "ticks": 158,
+            "per_tick": 14,
+            "pm_hits": [
+              1140,
+              1264
+            ],
+            "tk_hits": [
+              150,
+              166
+            ],
+            "rp_hits": [
+              150,
+              166
+            ]
+          },
+          {
+            "step": "S9",
+            "frame_rate": "about 144 (VSync off) again",
+            "frames": 300,
+            "ms": 2091,
+            "gain": 0,
+            "fps": 143.5
+          }
+        ],
+        "frames_per_tick": {
+          "about 144 FPS": 16.4,
+          "60 FPS": 8.0,
+          "60.5 FPS under the debugger": 7.9
+        },
+        "units_tried": [
+          {
+            "unit": 0.745,
+            "fps": "about 144",
+            "drain_pct": 1.117,
+            "uncertainty": 0.005
+          },
+          {
+            "unit": 0.745,
+            "fps": "60",
+            "drain_pct": 0.956
+          }
+        ],
+        "regen_fps": {
+          "r": 0.856,
+          "divisor_at_60": 10,
+          "frame_rate_ratio": 0.417,
+          "mana_per_s_at_R140": {
+            "default": 122.6,
+            "60": 105.0
+          }
+        }
+      },
+      "source": "ForgePact docs/mark1-set-research.md (Stats live procedure 5, Stats live 5 results, Stats live 5 decision); docs/RUNTIME_DATA_MODELS.md 7.10; forgepact-166-mark1-set-playtest2-live-5.md, not tracked"
+    }
+  }
+}

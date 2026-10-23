@@ -64,6 +64,51 @@
       "styles": { "8": "value first, signed", "9": "label first, unsigned" },
       "calls_per_pass": 335,
       "status": "measured"
+    },
+    "set_section": {
+      "what": "a set piece's tooltip, after the item's own stats and sockets: the set's bonus lines, then the set's name and its pieces",
+      "order": [
+        "two empty rows",
+        "the set bonus lines, through gml_Script_DrawInventoryStatsNew (formats 5 and 6, styles 8 and 9), bonus_active while active, bonus_inactive otherwise",
+        "two empty rows",
+        "the set's name, centred, set_name",
+        "each piece's name, centred, one row each in the set's order, the hovered piece included: piece_worn when worn, piece_not_worn otherwise; no count text",
+        "two empty rows, then the footer"
+      ],
+      "bonus_formats": { "5": "percent", "6": "flat" },
+      "colours": {
+        "bonus_active": 7844807,
+        "bonus_inactive": 4210752,
+        "set_name": 7844807,
+        "piece_worn": 65280,
+        "piece_not_worn": 4210752
+      },
+      "type_line": "Satanic Set <type>, where an ordinary Satanic item of the class reads Satanic <type> (Helmet, Body Armor, Boots, Gloves); drawn by the pass with draw_text",
+      "row_pitch": "28 px between rows at the capture's scale; ForgePact's forged rows draw at 30",
+      "not_read": "the per-line activation rule of a set bonus line, and how the pass decides an item is a set piece and counts the worn pieces",
+      "source": "ForgePact Item Truth tooltip captures, 230 set-piece tooltips from UI_Inventory_Tooltip_obj and UI_Pickup_Tooltip_obj, build pe-6aaa6779-0cad4fc8, 2026-09-27 to 2026-10-21 (ForgePact #166)",
+      "status": "measured"
+    },
+    "skill_grant": {
+      "what": "a +1 to <talent> line (stat 203) and the talent's description under it",
+      "line": "gml_Script_DrawInventoryStatsNew, format 3, style 8, in colours.line",
+      "description": "the talent's description, wrapped over rows and centred, in colours.description, then a parameter row; the item editor's static analysis puts it through gml_Script_DrawSkillDescription",
+      "colours": { "line": 18687, "description": 8421504 },
+      "not_established": "whether the description is drawn outside the ALT information view (every one of 200 captured stat-203 tooltips drew it; the 39 with ranges were ALT views)",
+      "source": "ForgePact Item Truth tooltip captures of Celestial's Authority (Heroic Shield) and 199 other tooltips with a stat-203 line, build pe-6aaa6779-0cad4fc8 (ForgePact #166)",
+      "status": "measured"
     }
+  },
+  "sets": {
+    "what": "the game's item set tables",
+    "scripts": ["gml_Script_GetSetName", "DefineSetPieceRequirements", "gml_Script_s_SetItemInfo", "gml_Script_GetSetInformation"],
+    "indices": { "first": 1, "last": 70 },
+    "names": "gml_Script_GetSetName maps a set index 1 to 70 to its localized name (the *_setname keys of translationsItem.csv); an index outside the table gets a fallback string",
+    "required_pieces": { "global": "global.requiredPieces", "indices": "1..70", "values": [2, 3, 4], "filled_by": "DefineSetPieceRequirements" },
+    "piece_reference": "gml_Script_s_SetItemInfo builds a set-piece reference of three fields, itemType, weaponType and itemId: a set names its pieces by a unique-repository triple",
+    "by_name": "gml_Script_GetSetInformation maps a set name to one of 70 cases",
+    "not_read": "what reads global.requiredPieces, and how the tooltip pass finds an item's set",
+    "source": "ghidra MCP reading of Hero_Siege.exe, build pe-6aaa6779-0cad4fc8, 2026-10-21, paraphrased (ForgePact #166)",
+    "status": "static_reading"
   }
 }

@@ -1,0 +1,269 @@
+{
+  "status": "model: every expected value is computed by hs_game_sdk.mark1_automation_model from the inputs beside it. The interval's shape and the 0.25 s floor are static reading and measured (RDM 7.1, 7.5). The replenish unit 0.745 (mana a second per drained unit of id 42's answer) is measured in process by Stats live 3, S7 minus S8 (35.05 mana a second over 47.04 drained units; S7 alone read 0.874 a unit of the answer), and the drain divides by it, so each automated skill takes about 1% of maximum mana a second; Stats live 5 then measured that per-second rate: 1.117% a second per skill at about 144 frames a second and 0.956% at 60. The unit-1 drain cases read the answer as mana a second (R - n x 1% x M), the unit-0.745 cases are the shipped arithmetic (R - n x 1% x M / 0.745). The 1.0 s base cast time, the 1500 maximum and the 30 baseline replenish are assumptions.",
+  "source": "docs/models/mark1-automation-spec.md; hs-game-sdk/python/hs_game_sdk/mark1_automation_model.py; checked by tests/test_mark1_automation_model.py (hub) and by ForgePact's test_mark1_priority_behavior.py (interval, within 1 ms) and test_mark1_cost_behavior.py (drain, maxmana)",
+  "units": {
+    "ability_cooldown": "seconds",
+    "base_cast_seconds": "seconds",
+    "expected_ms": "milliseconds, rounded to 0.001",
+    "percent": "% of maximum mana per second per automated skill",
+    "unit": "mana per second one unit of id 42's answer is (0.745 measured, Stats live 3 S7 minus S8; 1 reads the answer as mana per second)",
+    "expected_drain": "id-42 units: percent of max_mana divided by unit (mana per second at unit 1)",
+    "original": "the game's own answer for the dispatcher id (42 for drain, 37 for maxmana)",
+    "cut_pct": "% of maximum mana per automated skill"
+  },
+  "interval": [
+    {
+      "label": "no cooldown (abilityCooldown 0.25), no haste, no Faster Cast Rate: the cast time alone",
+      "ability_cooldown": 0.25,
+      "haste": 0,
+      "fcr": 0,
+      "base_cast_seconds": 1,
+      "expected_ms": 1000
+    },
+    {
+      "label": "no cooldown, abilityCooldown 0: the cast time alone",
+      "ability_cooldown": 0,
+      "haste": 0,
+      "fcr": 0,
+      "base_cast_seconds": 1,
+      "expected_ms": 1000
+    },
+    {
+      "label": "no cooldown at 100 Skill Haste: haste changes nothing",
+      "ability_cooldown": 0.25,
+      "haste": 100,
+      "fcr": 0,
+      "base_cast_seconds": 1,
+      "expected_ms": 1000
+    },
+    {
+      "label": "no cooldown at Faster Cast Rate -50: twice the cast time",
+      "ability_cooldown": 0.25,
+      "haste": 0,
+      "fcr": -50,
+      "base_cast_seconds": 1,
+      "expected_ms": 2000
+    },
+    {
+      "label": "no cooldown at Faster Cast Rate 100: half the cast time",
+      "ability_cooldown": 0.25,
+      "haste": 0,
+      "fcr": 100,
+      "base_cast_seconds": 1,
+      "expected_ms": 500
+    },
+    {
+      "label": "no cooldown at Faster Cast Rate -95: the divisor floored at 0.1",
+      "ability_cooldown": 0.25,
+      "haste": 0,
+      "fcr": -95,
+      "base_cast_seconds": 1,
+      "expected_ms": 10000
+    },
+    {
+      "label": "Healing Zone (14 s) at haste 0, Faster Cast Rate 0; also the interval before any stat read",
+      "ability_cooldown": 14,
+      "haste": 0,
+      "fcr": 0,
+      "base_cast_seconds": 1,
+      "expected_ms": 15000
+    },
+    {
+      "label": "Healing Zone (14 s) at haste 100: two thirds of the cooldown plus the cast",
+      "ability_cooldown": 14,
+      "haste": 100,
+      "fcr": 0,
+      "base_cast_seconds": 1,
+      "expected_ms": 10333.333
+    },
+    {
+      "label": "Healing Zone (14 s) at haste 300: counted as 200, half the cooldown",
+      "ability_cooldown": 14,
+      "haste": 300,
+      "fcr": 0,
+      "base_cast_seconds": 1,
+      "expected_ms": 8000
+    },
+    {
+      "label": "Healing Zone (14 s) at haste 100 and Faster Cast Rate 100",
+      "ability_cooldown": 14,
+      "haste": 100,
+      "fcr": 100,
+      "base_cast_seconds": 1,
+      "expected_ms": 9833.333
+    },
+    {
+      "label": "Healing Zone (14 s) at Faster Cast Rate -50",
+      "ability_cooldown": 14,
+      "haste": 0,
+      "fcr": -50,
+      "base_cast_seconds": 1,
+      "expected_ms": 16000
+    },
+    {
+      "label": "a cooldown just above the floor (0.3 s) counts as a cooldown",
+      "ability_cooldown": 0.3,
+      "haste": 0,
+      "fcr": 0,
+      "base_cast_seconds": 1,
+      "expected_ms": 1300
+    },
+    {
+      "label": "a base cast time of 1.5 s, the base being an input",
+      "ability_cooldown": 0.25,
+      "haste": 0,
+      "fcr": 0,
+      "base_cast_seconds": 1.5,
+      "expected_ms": 1500
+    }
+  ],
+  "drain": [
+    {
+      "label": "0 automated skills at 1% of 1500, the assumed 2% baseline (30) as the original",
+      "columns": 0,
+      "percent": 1,
+      "max_mana": 1500,
+      "unit": 1,
+      "original": 30,
+      "expected_drain": 0,
+      "expected_answer": 30
+    },
+    {
+      "label": "1 automated skill at 1% of 1500, the assumed 2% baseline (30) as the original",
+      "columns": 1,
+      "percent": 1,
+      "max_mana": 1500,
+      "unit": 1,
+      "original": 30,
+      "expected_drain": 15,
+      "expected_answer": 15
+    },
+    {
+      "label": "2 automated skills at 1% of 1500, the assumed 2% baseline (30) as the original",
+      "columns": 2,
+      "percent": 1,
+      "max_mana": 1500,
+      "unit": 1,
+      "original": 30,
+      "expected_drain": 30,
+      "expected_answer": 0
+    },
+    {
+      "label": "3 automated skills at 1% of 1500, the assumed 2% baseline (30) as the original",
+      "columns": 3,
+      "percent": 1,
+      "max_mana": 1500,
+      "unit": 1,
+      "original": 30,
+      "expected_drain": 45,
+      "expected_answer": -15
+    },
+    {
+      "label": "4 automated skills at 1% of 1500, the assumed 2% baseline (30) as the original",
+      "columns": 4,
+      "percent": 1,
+      "max_mana": 1500,
+      "unit": 1,
+      "original": 30,
+      "expected_drain": 60,
+      "expected_answer": -30
+    },
+    {
+      "label": "4 automated skills at 1% of 1500 from an original of 0",
+      "columns": 4,
+      "percent": 1,
+      "max_mana": 1500,
+      "unit": 1,
+      "original": 0,
+      "expected_drain": 60,
+      "expected_answer": -60
+    },
+    {
+      "label": "a pool so large the floor matters: 4 skills at a 30% override on 100000, the answer stops at minus the maximum",
+      "columns": 4,
+      "percent": 30,
+      "max_mana": 100000,
+      "unit": 1,
+      "original": 50,
+      "expected_drain": 120000,
+      "expected_answer": -100000
+    },
+    {
+      "label": "the shipped unit (0.745 mana a second per drained unit, Stats live 3 S7 minus S8): 1 automated skill at 1% of 1500 takes 15 / 0.745 units off 30",
+      "columns": 1,
+      "percent": 1,
+      "max_mana": 1500,
+      "unit": 0.745,
+      "original": 30,
+      "expected_drain": 20.13422818791946,
+      "expected_answer": 9.865771812080537
+    },
+    {
+      "label": "the shipped unit: 4 automated skills at 1% of 1500 take 60 / 0.745 units off 30",
+      "columns": 4,
+      "percent": 1,
+      "max_mana": 1500,
+      "unit": 0.745,
+      "original": 30,
+      "expected_drain": 80.53691275167785,
+      "expected_answer": -50.53691275167785
+    },
+    {
+      "label": "the shipped unit on Stats live 2's numbers: 2 automated skills, Sorak's 2352 mana and a replenish of 257",
+      "columns": 2,
+      "percent": 1,
+      "max_mana": 2352,
+      "unit": 0.745,
+      "original": 257,
+      "expected_drain": 63.14093959731544,
+      "expected_answer": 193.85906040268458
+    },
+    {
+      "label": "the shipped unit still stops at minus the maximum: 4 skills at a 25% override on 1000 from 0",
+      "columns": 4,
+      "percent": 25,
+      "max_mana": 1000,
+      "unit": 0.745,
+      "original": 0,
+      "expected_drain": 1342.2818791946308,
+      "expected_answer": -1000
+    }
+  ],
+  "maxmana": [
+    {
+      "label": "0 automated skills, 20% each, from 1500",
+      "columns": 0,
+      "cut_pct": 20,
+      "original": 1500,
+      "expected_answer": 1500
+    },
+    {
+      "label": "1 automated skill, 20% each, from 1500",
+      "columns": 1,
+      "cut_pct": 20,
+      "original": 1500,
+      "expected_answer": 1200
+    },
+    {
+      "label": "2 automated skills, 20% each, from 1500",
+      "columns": 2,
+      "cut_pct": 20,
+      "original": 1500,
+      "expected_answer": 900
+    },
+    {
+      "label": "3 automated skills, 20% each, from 1500",
+      "columns": 3,
+      "cut_pct": 20,
+      "original": 1500,
+      "expected_answer": 600
+    },
+    {
+      "label": "4 automated skills, 20% each, from 1500",
+      "columns": 4,
+      "cut_pct": 20,
+      "original": 1500,
+      "expected_answer": 300
+    }
+  ]
+}

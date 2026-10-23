@@ -1,0 +1,70 @@
+{
+  "$schema_note": "Hand-verified game knowledge, NOT mechanically extracted (see hs-game-sdk/curated/satanic_zone.json for why curated/ exists). Data only: no binding is generated from this file. Two numberings the Mark 1 set (ForgePact #166) uses side by side: `keys` are item stat keys, what an item's stats map holds and what the Custom Forge writes; `dispatcher_ids` are gml_Script_ReturnSpecificStat's stat-id argument, each answered by one getter script. `set_lines` is how the game's tooltip draws a set bonus line. `status` is `measured` (observed live or in Item Truth's captures) or `static_reading` (read from the compiled code locally and paraphrased; AGENTS.md section Legal).",
+  "status": "measured",
+  "source": {
+    "semantics": "hero-siege-item-editor/hs_stat_semantics_s10.json, schemaVersion 1, generated 2026-09-02 (read from the main checkout, never edited)",
+    "item_truth": "ForgePact Item Truth journals, 184 files, build pe-6aaa6779-0cad4fc8, 2026-09-27 to 2026-10-21: each drawn pass's draw_text rows and DrawInventoryStatsNew calls (id, label, format, style, height), the labels confirmed against the semantics file (ForgePact #166, 2026-10-22)",
+    "dispatcher": "the dispatcher's case map rss_cases.json beside the indexed ReturnSpecificStat decompile (2026-10-04, build 498d588550d8), a static reading kept on the researcher's machine only",
+    "docs": "docs/RUNTIME_DATA_MODELS.md section 16; ForgePact/docs/mark1-set-research.md"
+  },
+  "numbering_note": "Neither numbering here is hs_game_sdk.stats.StatId's: StatId is a different numbering (hub #546), so never look a key or a dispatcher id up through it.",
+  "keys": {
+    "20": { "name": "Sockets", "kind": "flat", "drawn": "the `Sockets (N)` text row after the stat lines, no stat call", "status": "measured" },
+    "25": { "name": "Increased Movement Speed", "kind": "percent", "drawn": { "label": "Increased Movement Speed", "format": 2, "style": 8 }, "status": "measured" },
+    "29": { "name": "Enhanced Defense", "kind": "percent", "drawn": { "label": "Enhanced Defense", "format": 2, "style": 8 }, "status": "measured" },
+    "48": { "name": "to Vitality", "kind": "flat", "drawn": { "label": "to Vitality", "format": 3, "style": 8 }, "status": "measured" },
+    "51": { "name": "to All Attributes", "kind": "flat", "drawn": { "label": "to All Attributes", "format": 3, "style": 8 }, "status": "measured" },
+    "52": { "name": "to Life", "kind": "flat", "drawn": { "label": "to Life", "format": 3, "style": 8 }, "status": "measured" },
+    "55": { "name": "Replenish Life", "kind": "percent", "drawn": { "label": "Replenish Life", "format": 2, "style": 9 }, "status": "measured" },
+    "59": { "name": "Life After each Kill", "kind": "flat", "drawn": { "label": "Life After each Kill", "format": 3, "style": 8 }, "status": "measured" },
+    "154": { "name": "Defense", "kind": "flat", "drawn": "the header `Defense: N`, no stat call; N with Enhanced Defense (key 29) applied is inferred, not measured", "status": "measured" },
+    "159": { "name": "Physical Damage Taken Reduced by", "kind": "percent", "drawn": { "label": "Physical Damage Taken Reduced by", "format": 2, "style": 9 }, "status": "measured" },
+    "170": { "name": "Faster Hit Recovery", "kind": "percent", "drawn": { "label": "Faster Hit Recovery", "format": 2, "style": 8 }, "status": "measured" },
+    "173": { "name": "to All Resistances", "kind": "percent", "drawn": { "label": "to All Resistances", "format": 2, "style": 8 }, "status": "measured" },
+    "201": { "name": "to All Skills", "kind": "flat", "drawn": { "label": "to All Skills", "format": 3, "style": 8 }, "note": "the class comes from stat 21, which Mark 1 never writes", "status": "measured" },
+    "294": { "name": "Skill Movement Diminish decreased by", "kind": "percent", "drawn": { "label": "Skill Movement Diminish decreased by", "format": 2, "style": 9 }, "note": "the reduction of the cast's movement slowdown, not a movement-speed stat; whether it feeds dispatcher id 199 is not established", "status": "measured" }
+  },
+  "dispatcher_ids": {
+    "2": { "getter": "StatAllSkills", "status": "static_reading" },
+    "21": { "getter": "StatArmor", "status": "static_reading" },
+    "22": { "getter": "StatVitality", "status": "static_reading" },
+    "36": { "getter": "StatMaxLife", "status": "static_reading" },
+    "37": { "getter": "StatMaxMana", "status": "static_reading" },
+    "38": { "getter": "StatLifeReplenish", "status": "static_reading" },
+    "42": { "getter": "StatManaReplenish", "status": "static_reading" },
+    "45": { "getter": "StatLifePerKill", "status": "static_reading" },
+    "46": { "getter": "StatManaPerKill", "status": "static_reading" },
+    "64": { "getter": "StatMovementSpeed", "status": "static_reading" },
+    "92": { "getter": "StatDefense", "status": "static_reading" },
+    "97": { "getter": "StatPhysicalDamageReduction", "status": "static_reading" },
+    "103": { "getter": "StatSpellHaste", "status": "static_reading" },
+    "106": { "getter": "StatFasterCastRate", "status": "static_reading" },
+    "147": { "getter": "ManaPerHit", "status": "static_reading" },
+    "161": { "getter": "StatAllResistances", "status": "static_reading" },
+    "162": { "getter": "StatFireResist", "status": "static_reading" },
+    "163": { "getter": "StatColdResist", "status": "static_reading" },
+    "164": { "getter": "StatPoisonResist", "status": "static_reading" },
+    "165": { "getter": "StatLightningResist", "status": "static_reading" },
+    "167": { "getter": "StatArcaneResist", "status": "static_reading" },
+    "340": { "getter": "StatManaCost", "status": "static_reading" }
+  },
+  "dispatcher_note": "Each getter's only direct caller is ReturnSpecificStat (a headless byte scan with a positive control, 2026-10-22, for StatMaxLife, StatDefense, StatArmor, StatAllResistances, StatFireResist, StatLifeReplenish, StatPhysicalDamageReduction, StatAllSkills and StatLifePerKill). Calls through the script table or a method value are invisible to that scan: not observed, not excluded.",
+  "set_line": {
+    "script": "gml_Script_DrawInventoryStatsNew",
+    "arguments": { "3": "value", "4": "label", "5": "format", "6": "style" },
+    "formats": { "5": "percent", "6": "flat" },
+    "styles": { "8": "value first, signed", "9": "label first" },
+    "row_height": 30,
+    "words": "a row reads the value then the label for style 8 (`+500 Defense`) and the label then the value for style 9 (`Replenish Life 25%`); a negative value is drawn signed (`-125% to All Resistances`)",
+    "status": "measured"
+  },
+  "set_lines": [
+    { "label": "Defense", "format": 6, "style": 8, "seen": "350, 475, 500", "status": "measured" },
+    { "label": "to All Resistances", "format": 5, "style": 8, "seen": "-125 (drawn signed)", "status": "measured" },
+    { "label": "Replenish Life", "format": 5, "style": 9, "seen": "25", "status": "measured" },
+    { "label": "to All Skills", "format": 6, "style": 8, "status": "measured" },
+    { "label": "to Life", "format": 6, "style": 8, "seen": "235 to 1250", "status": "measured" },
+    { "label": "Physical Damage Taken Reduced by", "format": 5, "style": 9, "seen": "15, 20, 30", "status": "measured" },
+    { "label": "Movement Speed", "format": 5, "style": 8, "seen": "25", "status": "measured" }
+  ]
+}
