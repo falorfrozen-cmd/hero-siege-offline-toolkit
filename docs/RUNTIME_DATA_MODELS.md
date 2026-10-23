@@ -5542,7 +5542,7 @@ words; nothing here quotes the game's code.
     `playerBuff` (63, 181 and 85 references) and test `instance_exists` (9,
     28 and 13). So the unit a stat is computed for may be argument 0 rather
     than self; **not established**. Measured in Stats live 3 (below):
-    argument 0 read 1 on every asker recorded, the player's sheet, the
+    argument 0 read 1 on every non-player asker recorded, the player's sheet, the
     mercenary and summons alike, so it does not tell them apart.
   - **The HUD's numbers** (static reading): `DrawHud` draws text through
     `draw_text` (32 references) after reading values through the protected
@@ -5561,13 +5561,15 @@ words; nothing here quotes the game's code.
   - **When an enemy strikes the player**, `sc_hurt` runs with the player
     as self and the player's 97 is asked with the player as self, once per
     hit (four hits). The player's 92 was not asked with the player as self
-    on those hits (not observed).
+    on those hits (not observed). Life read full before and after, so
+    whether those calls dealt damage was not read.
   - **The other self outside town is the mercenary.** `Mercenary_obj`
-    asked 92 and 97 (69 and 14 times, matching the logpoints' counts for
+    asked 92 and 97 (69 and 14 times, against the logpoints' 67 and 14 for
     that self); summons' and pets' passives (`Legion_Skeleton_Passive_obj`,
     `Legion_Skeleton_Archer_Passive_obj`, `Spider_Passive_obj`,
     `Zombie_Passive_obj`) asked 36 with the player's values; `Companion_obj`
-    and `Mercenary_obj` asked 64. Argument 0 read 1 on every asker.
+    and `Mercenary_obj` asked 64. Argument 0 read 1 on every non-player
+    asker recorded (the player's own calls' argument 0 was not recorded).
   - **The character sheet's askers.** On its Player tab
     `UI_Talent_Screen_Attribute_obj` asks 2, 21, 36, 37, 38, 42, 64, 92, 97,
     103, 106, 161 to 165 and 167, and `UI_Button_Talent_Player_obj` asks 2;

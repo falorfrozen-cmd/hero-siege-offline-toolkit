@@ -1399,7 +1399,7 @@
         "hit-control": {"verdict": "pass", "observed": "S3a: 4 hu (sc_hurt) lines with the room's reference self; S3b none"},
         "bonus-def-hit": {"verdict": "not-observed", "observed": "no df line with the reference self in S3a or S3b; S3b's 67 df lines carried another self", "note": "research"},
         "bonus-pdr-hit": {"verdict": "not-observed", "observed": "S3a: 4 pd with the reference self after each hu, 97 21->21 at two pieces (as designed); S3b: no hit, 14 pd with another self", "note": "research"},
-        "other-object": {"verdict": "pass", "observed": "92 and 97: Mercenary_obj (92*69, 97*14 against S3b's 67 df and 14 pd with that self); 36: Legion_Skeleton_Archer_Passive_obj, Legion_Skeleton_Passive_obj, Spider_Passive_obj, Zombie_Passive_obj; 64: Companion_obj, Mercenary_obj; every a0=1", "note": "research, recorded"},
+        "other-object": {"verdict": "pass", "observed": "92 and 97: Mercenary_obj (92*69, 97*14 against S3b's 67 df and 14 pd with that self); 36: Legion_Skeleton_Archer_Passive_obj, Legion_Skeleton_Passive_obj, Spider_Passive_obj, Zombie_Passive_obj; 64: Companion_obj, Mercenary_obj; every non-player a0=1", "note": "research, recorded"},
         "merc-page": {"verdict": "fail", "observed": "the talent screen's Mercenary tab, switch on: UI_Talent_Screen_Attribute_obj 36 12527->13277, 92 5114->5614, 97 86->106, 38 886->911, 161 140->175, 42 31->-16.04; UI_Button_Talent_Player_obj 2 0->5; the page showed Life 13277, Mana Replenish -16.04", "note": "research: the bonus and the cost reach the mercenary's page on the sheet; the mercenary's own calls stayed X->X"},
         "sheet-view": {"verdict": "pass", "observed": "Base Stats Life 5651 = statask 36; Defensive tab (hover, then a held left click at 744,544): Defense 7556 = 92, PDR 41% = 97", "note": "research"},
         "regen-units": {"verdict": "pass", "observed": "R 140, switch off: 154 mana in 1258 ms, 122.417 a second, 0.874 per unit", "note": "research, recorded; read in process (mark1probe vitals)"},
@@ -1412,7 +1412,7 @@
         "struck": "S3a: four sc_hurt calls with the player's self, each followed by a PDR (97) ask with the player's self; no Defense (92) ask with the player's self in either window",
         "outside_town": "Mercenary_obj asks 92 and 97 (the non-player self of Stats live 2); summons' and pets' passives ask 36; Companion_obj and Mercenary_obj ask 64",
         "sheet": "Player tab: UI_Talent_Screen_Attribute_obj asks 2, 21, 36, 37, 38, 42, 64, 92, 97, 103, 106, 161 to 165, 167; UI_Button_Talent_Player_obj asks 2; Mercenary tab: the same objects ask for the mercenary's stats, Load_Mana_Costs_obj asks 2; UI_Talent_Screen_Allocate_obj and Player_Talent_Tooltip_obj not seen asking",
-        "argument_0": "1 on every asker, the player's sheet, the mercenary and the passives alike"
+        "argument_0": "1 on every non-player asker recorded, the player's sheet, the mercenary and the passives alike; the player's own calls' argument 0 was not recorded"
       },
       "numbers": {
         "sheet": "switch on: Life 5651, Defense 7556, PDR 41% (equal to statask); switch off: Life 4901",
