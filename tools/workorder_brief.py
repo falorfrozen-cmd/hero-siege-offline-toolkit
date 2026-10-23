@@ -79,14 +79,30 @@ since baseHeads. Measured (the 2026-10-11 /workorder audit, F04/F16): drivers
 made 1,171 shell reads of the plan and context files and 536 `section.py`
 calls, largely to copy these values through their own context by hand.
 
+Each item carries `check_count` and `check_keys` (a key per backticked
+command) in place of its check texts, which are all the engine needs of them.
+
 Run `tools/workorder_record.py apply` on the previous launch first: State and
 the Log are read from the files. Exit 1 when the plan's lint has a finding
 (it goes back to the planner, as it always did), 2 when the plan is missing.
+
+`--to-file` writes those args to
+`.claude/workorders/.rounds/<slug>/launch-args.json` instead, and prints the
+args the driver passes inline, `{slug, argsPath, argsDigest}`: a plan of 29
+items made 94 KB of args (#547). The script has one agent run
+
+    py -3 tools/workorder_brief.py --read-launch-args <path> [--slug SLUG]
+
+which prints the args as one line of canonical JSON (sorted keys, no
+spaces), and checks what the agent relayed against `argsDigest`. Exit 2 no
+such file, 4 another workorder's args, 6 stale: the plan or context file
+changed after the file was written, so write it again.
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import subprocess
@@ -647,7 +663,7 @@ def launch_args(a) -> dict:
             out[key] = getattr(a, flag)
     items = json.loads(plan_lint._items_json(plan.text, set()))
     if items.get("items"):
-        out["items"] = items["items"]
+        out["items"] = [compact_item(it) for it in items["items"]]
         if not items.get("complete", True) or values.get("planning", "").startswith("streaming"):
             out["streaming"] = True
         if _csv(a.answered):
@@ -669,6 +685,112 @@ class LintFailed(Exception):
     pass
 
 
+# -- args too large to pass inline (--to-file, --read-launch-args) -------------
+#
+# #547: a plan of 29 items made 94 KB of launch args, 58 KB of it the items'
+# check texts, and the Workflow tool takes args only inline. The engine needs
+# a check's text for two things only: how many an item has, and whether two
+# items run the same command. So an item goes out with `check_count` and
+# `check_keys` (FNV-1a 32 of each backticked span, over UTF-16 code units, as
+# `checkKeysOf` in workorder-rounds.js computes it) instead of `checks`.
+# `--to-file` then writes the args to a file and prints `{slug, argsPath,
+# argsDigest}`; the script has a haiku agent run `--read-launch-args`, and
+# refuses the relay unless its digest matches.
+
+ARGS_FILE = "launch-args.json"
+BACKTICK_SPAN = re.compile(r"`([^`]+)`")
+
+
+def fnv1a32(text: str) -> str:
+    h = 0x811C9DC5
+    raw = text.encode("utf-16-le")
+    for i in range(0, len(raw), 2):
+        h ^= raw[i] | (raw[i + 1] << 8)
+        h = (h * 0x01000193) & 0xFFFFFFFF
+    return f"{h:08x}"
+
+
+def check_keys(checks: list) -> list:
+    out: list = []
+    for check in checks:
+        for span in BACKTICK_SPAN.findall(str(check)):
+            key = fnv1a32(span.strip())
+            if key not in out:
+                out.append(key)
+    return out
+
+
+def compact_item(item: dict) -> dict:
+    checks = item.get("checks") or []
+    out = {k: v for k, v in item.items() if k != "checks"}
+    out["check_count"] = len(checks)
+    out["check_keys"] = check_keys(checks)
+    return out
+
+
+def canon_json(value) -> str:
+    """The text `canonJson` in workorder-rounds.js builds from the same value."""
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+
+
+def args_digest(value) -> str:
+    text = canon_json(value)
+    return f"fnv1a32:{fnv1a32(text)}:{len(text.encode('utf-16-le')) // 2}"
+
+
+def _sha256(path: Path) -> str | None:
+    return hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else None
+
+
+def write_args_file(args: dict, root: Path) -> dict:
+    """Write `args` beside the workorder's round snapshots; return what the
+    driver passes inline."""
+    slug = args["slug"]
+    path = root / ".claude" / "workorders" / ".rounds" / slug / ARGS_FILE
+    path.parent.mkdir(parents=True, exist_ok=True)
+    record = {
+        "slug": slug,
+        "plan_sha256": _sha256(root / args["planPath"]),
+        "context_sha256": _sha256(root / args["contextPath"]),
+        "args": args,
+    }
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(record, ensure_ascii=False, indent=1) + "\n", encoding="utf-8", newline="\n")
+    tmp.replace(path)
+    return {"slug": slug, "argsPath": path.as_posix(), "argsDigest": args_digest(args)}
+
+
+class Stale(Exception):
+    pass
+
+
+def read_args_file(path: Path, slug: str | None) -> dict:
+    """The args a `--to-file` run wrote. Refused when the file is missing
+    (`Usage`), holds another workorder's args (`WrongWorkorder`), or was
+    written before the plan or context file last changed (`Stale`): a launch
+    after `workorder_record.py apply` must start from the State it wrote."""
+    if not path.is_file():
+        raise Usage(f"no launch args file {path}: run `workorder_brief.py --launch-args <slug> --to-file` first")
+    try:
+        record = json.loads(path.read_text(encoding="utf-8"))
+        args = record["args"]
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        raise Usage(f"{path} is not a launch args file: {exc}")
+    if slug and record.get("slug") != slug:
+        raise WrongWorkorder(f"{path} holds the args of {record.get('slug')!r}, not {slug!r}")
+    root = Path(args.get("checkoutRoot") or path.parents[4])
+    for key, sha_key in (("planPath", "plan_sha256"), ("contextPath", "context_sha256")):
+        now = _sha256(root / args[key])
+        if now != record.get(sha_key):
+            raise Stale(f"{args[key]} changed after {path} was written: run "
+                        f"`workorder_brief.py --launch-args {record.get('slug')} --to-file` again")
+    return args
+
+
+class WrongWorkorder(Exception):
+    pass
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="workorder_brief.py",
                                 description="Print one implementer's slice of a /workorder plan.")
@@ -683,6 +805,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--answered")
     p.add_argument("--first-implementation", dest="first_implementation", action="store_true")
     p.add_argument("--final-gate", dest="final_gate", action="store_true")
+    p.add_argument("--to-file", dest="to_file", action="store_true")
+    p.add_argument("--read-launch-args", dest="read_launch_args", metavar="PATH")
+    p.add_argument("--slug")
     one = p.add_mutually_exclusive_group()
     one.add_argument("--round", type=int)
     one.add_argument("--lane")
@@ -699,9 +824,27 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
+    if args.read_launch_args is not None:
+        try:
+            text = canon_json(read_args_file(Path(args.read_launch_args), args.slug)) + "\n"
+        except Usage as exc:
+            print(f"workorder_brief: {exc}", file=sys.stderr)
+            return 2
+        except WrongWorkorder as exc:
+            print(f"workorder_brief: {exc}", file=sys.stderr)
+            return 4
+        except Stale as exc:
+            print(f"workorder_brief: {exc}", file=sys.stderr)
+            return 6
+        sys.stdout.buffer.write(text.encode("utf-8"))
+        sys.stdout.buffer.flush()
+        return 0
     if args.launch_args is not None:
         try:
-            text = json.dumps(launch_args(args), ensure_ascii=False, indent=1) + "\n"
+            built = launch_args(args)
+            if args.to_file:
+                built = write_args_file(built, Path(built["checkoutRoot"]))
+            text = json.dumps(built, ensure_ascii=False, indent=1) + "\n"
         except Usage as exc:
             print(f"workorder_brief: {exc}", file=sys.stderr)
             return 2

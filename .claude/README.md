@@ -573,7 +573,14 @@ and that per-round reviewers mostly found nothing.
   `*.md`.
 - **Fix rounds** continue inside one launch up to the caps.
 - **Launch args:** the driver builds them with `py -3 tools/workorder_brief.py
-  --launch-args <slug>`.
+  --launch-args <slug>`. Items carry `check_count`/`check_keys`, not their
+  check texts. With `--to-file`, the args go to
+  `.claude/workorders/.rounds/<slug>/launch-args.json` and the driver passes
+  only `{slug, argsPath, argsDigest}`. The launch's `load-args:<k>` agent
+  relays the file, and the script checks the relay against the digest (#547).
+- **Rebuilds** re-run an item's checks (`item-verifier:<id>:a<k>:rebuild:r<n>`)
+  before any implementer. A per-commit reviewer waits while a queued item
+  edits the same file (#505).
 - **Criteria reuse:** a development verify passes `run_criteria.py --reuse
   <implementer criteria dir>`.
 
@@ -898,7 +905,11 @@ each launch's item windows (`max_concurrent`, `minutes_at_cap`,
 `queued_behind_cap`, `finding_to_fix_minutes`), verifies by kind, the
 `run_criteria` calls the Bash limit killed, owner waits, the implementers'
 check catch rate, routes (amendments, in-launch amendments, replans,
-consultations), the audit's lane summary, and `workorder_reads`. That last
+consultations), `driver_context` (the driver's peak context, the agent and
+phase-agent results it took in, and per `Workflow` call the context, args
+KB and result KB: #547), each items launch's `rebuilds`, `rebuild_checks`
+and `item_implementers` (#505), the audit's lane summary, and
+`workorder_reads`. That last
 one is keyed by role and counts how each role read the workorder's own
 files: `agents`, `plan_calls`/`plan_kb` (a `Read` of a `-plan.md`, or a
 shell command naming one, except a command that runs `run_criteria.py`,

@@ -72,6 +72,10 @@ export const meta = {
 //                                       // and every deferred reviewer and the decompile guard run
 // }
 //
+// Or, for args too large to pass inline (2n below): { slug, argsPath, argsDigest }, exactly as
+// `workorder_brief.py --launch-args <slug> --to-file` printed them, plus any key no file holds
+// (reviewScopes, the items budgets), which wins over the file's.
+//
 // The result always carries `record: { slug, planPath, contextPath, checkoutRoot, launch, rounds: [{ round,
 // stateLines, logBlock }], state }` (2b): every round this launch finished, in order. The workflow cannot
 // write a file, so the driver's first act after any launch is `py -3 tools/workorder_record.py apply --run
@@ -85,7 +89,48 @@ export const meta = {
 // owner's new decisions (SKILL.md Step 4, "Owner scope is not a failure").
 // Each extends the cap by one, at most SCOPE_CAP in all.
 
-const A = args || {}
+// --- 2n: launch args from a file ---------------------------------------------
+//
+// #547 (forgepact-166-mark1-set-playtest2, 2026-10-23): a plan of 29 items made
+// 94 KB of launch args, 58 KB of it the items' check texts. The Workflow tool
+// takes args only inline, so the driver would have echoed all of it through
+// its own context; it ran driver mode instead, and about 40 full subagent
+// reports landed in its context. So `--launch-args --to-file` writes the args
+// to a file and prints only its path and digest. A script cannot read a file,
+// so one haiku agent runs `workorder_brief.py --read-launch-args`, which
+// refuses a missing file, another workorder's, or one written before the plan
+// or context file last changed (exit 2, 4, 6), and relays the JSON. The
+// relay is checked against the digest the driver passed: an agent that drops
+// or rewords one character is refused, never trusted. A second try runs at
+// sonnet, then the launch is BAD-ARGS.
+const LOAD_ARGS_SCHEMA = {
+  type: 'object',
+  properties: { exit_code: { type: 'number' }, args: { type: 'object' }, raw_output: { type: 'string' } },
+  required: ['exit_code'],
+}
+async function loadArgsFile(inline) {
+  const { argsPath, argsDigest, ...rest } = inline
+  if (!argsDigest) return { refused: 'argsPath needs the argsDigest that `workorder_brief.py --launch-args <slug> --to-file` printed beside it' }
+  const cmd = `py -3 tools/workorder_brief.py --read-launch-args "${argsPath}"${inline.slug ? ` --slug ${inline.slug}` : ''}`
+  let why = ''
+  for (const [k, model] of [[1, 'haiku'], [2, 'sonnet']]) {
+    const r = await agent(`Run exactly: ${cmd}  (Bash timeout 120000) — report its exit code in 'exit_code', and its whole output in 'raw_output' when it did not exit 0. ` +
+      `When it exited 0 it printed one line of JSON: put that object in 'args' exactly as printed -- every key and every value, character for character, nothing added, dropped, reordered within a list or reworded. Edit nothing.`,
+      { label: `load-args:${k}`, phase: 'Record', model, effort: 'low', schema: LOAD_ARGS_SCHEMA })
+    if (!r) { why = 'the args loader returned nothing'; continue }
+    if (r.exit_code !== 0) return { refused: `workorder_brief.py --read-launch-args exited ${r.exit_code}: ${String(r.raw_output || '').slice(-1500)}` }
+    const got = argsDigestOf(r.args || {})
+    if (got === argsDigest) return { args: { ...r.args, ...rest } }
+    why = `the loader relayed args with digest ${got}, not ${argsDigest}`
+  }
+  return { refused: `${why}; run \`workorder_brief.py --launch-args <slug> --to-file\` again and relaunch` }
+}
+let A = args || {}
+if (A.argsPath) {
+  const loaded = await loadArgsFile(A)
+  if (loaded.refused) return { outcome: 'BAD-ARGS', detail: loaded.refused }
+  A = loaded.args
+}
 const ROUND_CAP = 3
 const SCOPE_CAP = 3
 const SLUG = A.slug
@@ -300,11 +345,38 @@ function invalidatedBy(items, st, id) {
   const bad = items.find(it => it.id === id)
   if (!bad) return []
   const links = it => (it.after || []).concat(it.shares || [])
-  const cmds = it => new Set((it.checks || []).flatMap(c => [...String(c).matchAll(/`([^`]+)`/g)].map(m => m[1].trim())))
+  const cmds = it => new Set(it.checkKeys || checkKeysOf(it.checks || []))
   const badCmds = cmds(bad)
   return items.filter(it => it.id !== id && st[it.id].status === 'pending' && (
     links(it).includes(id) || links(bad).includes(it.id) || filesOverlap(it.files, bad.files) ||
     [...cmds(it)].some(c => badCmds.has(c)))).map(it => it.id)
+}
+
+// What an item's checks are to the engine (#547): how many there are, and a
+// key per backticked span, so two items running the same command can be
+// told apart without carrying the check texts, which were 58 of 94 KB of one
+// launch's args. `workorder_brief.py --launch-args` sends `check_count` and
+// `check_keys` in their place; the same keys are computed here for an item
+// table that still carries `checks` (an amendment's or a refill's).
+// tests/test_workorder_launch_args.py pins the Python twin to these values.
+function fnv1a32(s) {
+  let h = 0x811c9dc5
+  for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0 }
+  return h.toString(16).padStart(8, '0')
+}
+function checkKeysOf(checks) {
+  return [...new Set((checks || []).flatMap(c => [...String(c).matchAll(/`([^`]+)`/g)].map(m => fnv1a32(m[1].trim()))))]
+}
+// Python's json.dumps(v, sort_keys=True, separators=(',', ':'), ensure_ascii=False),
+// for the integers, strings, lists and objects launch args hold.
+function canonJson(v) {
+  if (Array.isArray(v)) return `[${v.map(canonJson).join(',')}]`
+  if (v && typeof v === 'object') return `{${Object.keys(v).sort().map(k => `${JSON.stringify(k)}:${canonJson(v[k])}`).join(',')}}`
+  return JSON.stringify(v === undefined ? null : v)
+}
+function argsDigestOf(v) {
+  const s = canonJson(v)
+  return `fnv1a32:${fnv1a32(s)}:${s.length}`
 }
 
 // Nothing left that could run: every item is done, parked or held.
@@ -1168,6 +1240,10 @@ const MAX_AGENTS = A.maxAgents || 120
 const REVIEW_PASS_CAP = A.reviewPassCap || 4
 const ITEM_ID = /^[a-z0-9-]+$/
 const validItem = it => it && ITEM_ID.test(it.id || '') && Array.isArray(it.files) && it.files.length > 0
+// `checks` from plan_lint, or `check_count`/`check_keys` from --launch-args (3a, checkKeysOf).
+const checkFields = raw => Array.isArray(raw.checks)
+  ? { checkCount: raw.checks.length, checkKeys: checkKeysOf(raw.checks) }
+  : { checkCount: Number.isInteger(raw.check_count) ? raw.check_count : 0, checkKeys: Array.isArray(raw.check_keys) ? raw.check_keys : [] }
 if (ITEMS_IN.length) {
   const ids = ITEMS_IN.map(it => it && it.id)
   const bad = ITEMS_IN.find(it => !validItem(it) || ids.filter(x => x === it.id).length > 1)
@@ -1252,7 +1328,7 @@ async function runItems(n) {
   const all = []
   const st = {}
   const add = raw => {
-    const it = { id: raw.id, title: raw.title || '', files: raw.files, after: raw.after || [], shares: raw.shares || [], owner: raw.owner || null, default: raw.default, reversible: raw.reversible, checks: raw.checks || [], buildReads: Array.isArray(raw.build_reads) ? raw.build_reads : [], kind: raw.kind || 'item', findings: raw.findings, reviewer: raw.reviewer, failed: raw.failed }
+    const it = { id: raw.id, title: raw.title || '', files: raw.files, after: raw.after || [], shares: raw.shares || [], owner: raw.owner || null, default: raw.default, reversible: raw.reversible, ...checkFields(raw), buildReads: Array.isArray(raw.build_reads) ? raw.build_reads : [], kind: raw.kind || 'item', findings: raw.findings, reviewer: raw.reviewer, failed: raw.failed }
     all.push(it)
     // Only a plan item carries over from State: fix ids are this launch's own.
     const prior = it.kind === 'item' ? itemsState[it.id] : undefined
@@ -1334,7 +1410,7 @@ async function runItems(n) {
     `Run no full build and no full suite. Before returning IMPL-DONE run your item's checks once, \`py -3 tools/run_criteria.py "${A.planPath}" --item ${it.id} --jobs auto --out "${itemCriteriaDir(it, s)}"\` (Bash timeout 600000), and fix what fails; an independent verifier runs them again after you. ` +
     (s.retry === 'checks' ? `This is attempt ${s.attempts}: after the previous attempt's IMPL-DONE the item's checks failed, and the verifier reported:\n${s.evidence}\nFix that, commit again, and return. ` : '') +
     (s.retry === 'amended' ? `This is attempt ${s.attempts}. ${AMENDED_NOTE}` : '') +
-    (s.retry === 'rebuild' ? `This item was done, then ${s.staleBy} committed ${s.stalePaths}, which its build checks read, so what it built names the old tree. Carry out its steps again against the tree as it is now, commit only if a file in your set changed, and run its checks. ` : '') +
+    (s.retry === 'rebuild' ? `This item was done, then ${s.staleBy} committed ${s.stalePaths}, which its build checks read, and its checks then failed against the tree as it is now:\n${s.evidence}\nFix that against the current tree -- check first whether your steps are still in it -- commit only if a file in your set changed, and run its checks. ` : '') +
     VERDICT_ASK
   const fixPrompt = (it, s) => workorderLine(n) + briefLine(amendedSel(fixSel(it), !!(s && s.retry === 'amended'))) +
     (it.kind === 'gate-fix'
@@ -1345,13 +1421,18 @@ async function runItems(n) {
     `Your file set is ${fileWords(it)}${it.files === '*' ? '' : ': edit nothing outside it -- an edit you need outside it goes under NOT DONE with the path'}. ` +
     `Run no git command that writes, except committing once, at the end, with exactly \`${commitCmd(it.id, '')}\` naming the files you changed. ${COMMIT_NOTE}` +
     `Run no full build or suite: the whole-tree criteria run once the queue drains. ` + (s && s.retry === 'amended' ? AMENDED_NOTE : '') + VERDICT_ASK
-  const checkPrompt = (it, s) => `Workorder: ${A.planPath}. Run item '${it.id}''s targeted checks and report what they printed: exactly ` +
-    `\`py -3 tools/run_criteria.py "${A.planPath}" --item ${it.id} --jobs auto --reuse "${itemCriteriaDir(it, s)}" --out "<your scratchpad>/item-${it.id}-a${s.attempts}"\`, with the Bash timeout at 600000. ` +
-    `\`--reuse\` lets the runner take a check's result from the implementer's own run only where the commit and the check's \`(reads ...)\` hash both match, and re-run every other check; it reads that directory, you do not. ` +
+  // `recheck`: a rebuild's first step (#505) has no implementer run to reuse.
+  const checkPrompt = (it, s, recheck = false) => `Workorder: ${A.planPath}. Run item '${it.id}''s targeted checks and report what they printed: exactly ` +
+    `\`py -3 tools/run_criteria.py "${A.planPath}" --item ${it.id} --jobs auto${recheck ? '' : ` --reuse "${itemCriteriaDir(it, s)}"`} --out "<your scratchpad>/item-${it.id}-a${s.attempts}"\`, with the Bash timeout at 600000. ` +
+    (recheck
+      ? `The item was done; then ${s.staleBy} committed ${s.stalePaths}, which these checks read, so they run again against the tree as it is now. `
+      : `\`--reuse\` lets the runner take a check's result from the implementer's own run only where the commit and the check's \`(reads ...)\` hash both match, and re-run every other check; it reads that directory, you do not. `) +
     `These checks are your whole mandate this time: do not run the root suite or the workorder's acceptance criteria, which run once every item is done. ` +
     `Report each check as a criterion, judged from what the runner printed. Other items are being edited in this checkout while you run: a failure you can trace to a file outside this item's set (${fileWords(it)}) goes in 'other_defects' naming that file, not in a criterion.` +
     VERIFIER_CONTEXT_NOTE
 
+  const failedEvidence = v => (v.criteria || []).filter(c => c.status === 'fail').map(c => `- FAILED ${c.criterion}: ${c.evidence}`)
+    .concat((v.other_defects || []).map(d => `- ${d}`)).join('\n') || `verdict ${v.verdict}`
   async function runItem(it) {
     const s = st[it.id]
     for (;;) {
@@ -1359,6 +1440,22 @@ async function runItems(n) {
       // A commit that made an earlier attempt stale is already in the tree
       // this one starts from (a check retry, or a re-run after an amendment).
       s.stale = false
+      // #505: a rebuild runs the item's checks before it spends an
+      // implementer. In forgepact-158-flight-charms-mod (2026-10-12) four
+      // items sharing ModuleMain.cpp re-ran each other's implementers on every
+      // commit, and most re-runs changed nothing ("forge steps 1-7 are all
+      // still in the tree"). Only checks that fail on the new tree send the
+      // item back to an implementer. The re-check is not an implement attempt.
+      if (s.retry === 'rebuild' && !s.rechecked && it.kind === 'item' && it.checkCount) {
+        s.rechecked = true
+        s.chargeFrom++
+        const v = await spawn(checkPrompt(it, s, true), { label: `item-verifier:${it.id}:a${s.attempts}:rebuild:r${n}`, phase: 'Verify', agentType: 'verifier', schema: VERIFIER_SCHEMA })
+        if (!v) return { lost: 'the rebuild\'s item-check verifier returned nothing' }
+        if (v.verdict === 'PASS' || v.verdict === 'PASS-PENDING-HUMAN') return { verdict: 'DONE', pending: v.pending_human || [] }
+        s.evidence = failedEvidence(v)
+        if (v.verdict === 'PLAN-DEFECT') return { verdict: 'PLAN-DEFECT', evidence: s.evidence }
+        continue
+      }
       const label = it.kind === 'item' ? `item-implementer:${it.id}:a${s.attempts}:r${n}` : `fix-implementer:${it.id}:r${n}`
       const agentType = it.kind === 'fix' && patchableFix(it.findings) ? PATCH_IMPLEMENTER : IMPLEMENTER
       const impl = await spawn(it.kind === 'item' ? itemPrompt(it, s) : fixPrompt(it, s), { label, phase: 'Implement', agentType, model: A.implementerModel || 'opus', schema: ITEM_IMPL_SCHEMA })
@@ -1378,12 +1475,11 @@ async function runItems(n) {
       s.amended = false
       s.report = impl.report || ''
       s.committed = !!(impl.commits && impl.commits.length)
-      if (it.kind !== 'item' || !it.checks.length) return { verdict: 'DONE' }
+      if (it.kind !== 'item' || !it.checkCount) return { verdict: 'DONE' }
       const v = await spawn(checkPrompt(it, s), { label: `item-verifier:${it.id}:a${s.attempts}:r${n}`, phase: 'Verify', agentType: 'verifier', schema: VERIFIER_SCHEMA })
       if (!v) return { lost: 'the item-check verifier returned nothing' }
       if (v.verdict === 'PASS' || v.verdict === 'PASS-PENDING-HUMAN') return { verdict: 'DONE', pending: v.pending_human || [] }
-      const failedChecks = (v.criteria || []).filter(c => c.status === 'fail')
-      s.evidence = failedChecks.map(c => `- FAILED ${c.criterion}: ${c.evidence}`).concat((v.other_defects || []).map(d => `- ${d}`)).join('\n') || `verdict ${v.verdict}`
+      s.evidence = failedEvidence(v)
       s.retry = 'checks'
       if (v.verdict === 'PLAN-DEFECT') return { verdict: 'PLAN-DEFECT', evidence: s.evidence }
       // An attempt that ended in an amendment (3d) is not charged to the budget.
@@ -1408,7 +1504,7 @@ async function runItems(n) {
     // Two builds that each commit into what the other reads would re-run
     // each other for ever; past the cap the item parks for the driver.
     if (s.rebuilds >= REBUILD_CAP) { Object.assign(s, { status: 'parked', stale: false, reason: `budget: re-run ${s.rebuilds} times after commits landed on what it reads (last by ${s.staleBy})` }); return }
-    Object.assign(s, { status: 'pending', reason: '', stale: false, retry: 'rebuild', chargeFrom: s.attempts, amendCount: 0 })
+    Object.assign(s, { status: 'pending', reason: '', stale: false, retry: 'rebuild', rechecked: false, chargeFrom: s.attempts, amendCount: 0 })
     s.rebuilds++
   }
   const markStale = (by, paths) => {
@@ -1503,7 +1599,7 @@ async function runItems(n) {
       if (x.kind !== 'item' || !raw || st[x.id].status !== 'pending') continue
       x.title = raw.title || x.title
       x.files = raw.files
-      x.checks = raw.checks || []
+      Object.assign(x, checkFields(raw))
       x.buildReads = Array.isArray(raw.build_reads) ? raw.build_reads : []
       x.after = (raw.after || []).filter(d => st[d])
       x.shares = (raw.shares || []).filter(d => st[d])
@@ -1517,7 +1613,9 @@ async function runItems(n) {
   const deltaOf = events => ({
     paths: events.flatMap(e => e.paths), instrumentContent: events.some(e => /instrument/.test(e.flags)), sdkContent: events.some(e => /sdk/.test(e.flags)),
   })
-  const inScope = (rv, paths) => !rv.scope || paths.some(p => (rv.scope.paths || []).some(g => pathsOverlap(g, p)))
+  const sameFileQueued = paths => all.some(it => it.kind === 'item' && ['pending', 'running'].includes(st[it.id].status) &&
+    it.files !== '*' && it.files.some(f => paths.some(p => pathsOverlap(f, p))))
+  const inScope = (rv, paths) =>!rv.scope || paths.some(p => (rv.scope.paths || []).some(g => pathsOverlap(g, p)))
   // #540: a deferred reviewer (not PER_ROUND) that is not confirming a finding
   // of its own waits for the gate -- nothing running and every item done --
   // and then reads the whole change once, like the rounds' final gate.
@@ -1545,6 +1643,11 @@ async function runItems(n) {
     const d = deltaOf(fresh)
     const wanted = rv.state === 'never' || rv.state === 'blocking' || ((TRIGGERS[rv.name] || (() => true))(d) && inScope(rv, d.paths))
     if (!wanted) { rv.seen = landed.length; (passLog[rv.key] = passLog[rv.key] || { passes: 0, skipped: 0 }).skipped++; return false }
+    // #505: while a plan item that edits a file these commits touched is
+    // still queued or running, it will commit to that file again; one pass
+    // after it reads both commits instead of a pass per commit. The final
+    // catch-up runs whatever is left.
+    if (!finalCatchUp && sameFileQueued(d.paths)) return false
     return rv.passes < REVIEW_PASS_CAP - 1 || finalCatchUp
   }
   const reviewScopeText = rv => [{ key: '.' }].concat(SUBMODULES.map(s => ({ key: s }))).map(({ key }) => {

@@ -1413,3 +1413,73 @@ runs on 2026-10-07 (Claude Code 2.1.294).
   after the alias moves compares verifier runs before and after.
 - A patch round (an implementer applying a reviewer's written `fix`) is a
   candidate for Haiku 5.5 at `high` or `xhigh`; not tried.
+
+# Overseer, not relay: launch args from a file, rebuilds that re-check first (2026-10-23)
+
+## The question
+
+Two issues, both about work the pipeline did without need. #547: why did a
+`/workorder resume` of forgepact-166-mark1-set-playtest2 on 2026-10-23 run in
+driver mode and fill the driver's context? #505: why did
+forgepact-158-flight-charms-mod's items re-run each other's implementers on
+every commit (2026-10-12)?
+
+## What was found
+
+- **Args.** `workorder_brief.py --launch-args` printed 94 KB for that plan's
+  29 items. 58 KB of it was the items' check texts, and 5.7 KB and 12 KB were
+  the goal and State. The Workflow tool takes `args` only inline, so a launch
+  would have echoed the lot through the driver. The driver ran driver mode
+  instead. `workorder_speed.py`'s new `driver_context` on that session's
+  transcript reads: peak 374,710 tokens, with 26 phase-agent results (of 30
+  `Agent` results) taken into the driver's own context. The resume after it
+  peaked at 194,351 tokens with 8.
+- **What the engine needs of a check.** `workorder-rounds.js` reads an
+  item's checks in two places only: whether it has any, and whether two
+  items run the same command (`invalidatedBy`). Their text goes to agents
+  through `run_criteria.py --item`, never through the args.
+- **Rebuilds.** A commit landing on what a done build reads sent the build
+  back to pending, and a pending item always started with a fresh
+  implementer. In launch 2 (`wf_d9c3f26f-b1f`) `forge`, `lever` and `drops`,
+  all editing `ModuleMain.cpp` with build checks reading
+  `ForgePact/plugin/**`, ran 3, 3 and 2 implementers. Most of the re-runs
+  reported their steps "still in the tree".
+- **Reviewer passes.** A per-commit reviewer ran on every landed commit,
+  including commits to a file that a queued item was about to edit again.
+- `plan_lint.py`'s new `item-shared-build` warning names 7 items in the
+  forgepact-158 mod plan and 9 in the playtest2 plan whose builds later
+  items re-run.
+
+## What changed
+
+- `--launch-args` sends `check_count` and `check_keys` (FNV-1a 32 of each
+  backticked span) in place of check texts. The playtest2 args fall from
+  98 KB to 48 KB, 41 KB canonical.
+- `--launch-args --to-file` writes the args to
+  `.claude/workorders/.rounds/<slug>/launch-args.json` and prints `{slug,
+  argsPath, argsDigest}`. The script's first agent relays
+  `--read-launch-args`, and the script checks the relay against the digest
+  (canonical JSON, FNV-1a 32 over UTF-16 code units, computed identically
+  by both languages and pinned by tests on both sides). A stale file (plan
+  or context changed since) exits 6 and the launch is `BAD-ARGS`.
+- A rebuild runs the item's checks first, at
+  `item-verifier:<id>:a<k>:rebuild:r<n>`, uncharged. It spawns an
+  implementer only when they fail, and hands it what failed.
+- A per-commit reviewer waits while a queued or running plan item edits a
+  file the new commits touched.
+- `plan_lint.py` warns `item-shared-build`, and `planner.md` says to cut
+  items by disjoint files.
+- `workorder_speed.py` reports `driver_context` per session and launch, and
+  `rebuilds`, `rebuild_checks` and `item_implementers` per items launch.
+
+## Not yet measured
+
+- How often a haiku relay of 40 KB of args matches the digest on the first
+  try. The sonnet retry and `BAD-ARGS` bound the cost; the `load-args:<k>`
+  labels count it.
+- The rebuild and review counts of a re-planned forgepact-158 run, against
+  `wf_d9c3f26f-b1f` (44 agents for 5 items). Compare
+  `workorder_speed.py`'s `rebuilds`, `rebuild_checks` and
+  `item_implementers` once a plan of shared-file items has run.
+- The driver context of a `--to-file` launch of a large items plan, against
+  the 374,710-token peak above.

@@ -1265,7 +1265,7 @@ test('the verifier is sent to the criteria runner first, and told it judges noth
 // between its @scheduler markers; the engine around it with stub agents that
 // take a few milliseconds each, so "at the same time" is observable.
 const schedSrc = src.slice(src.indexOf('// @scheduler-begin'), src.indexOf('// @scheduler-end'))
-const sched = new Function(`${schedSrc}\nreturn { nextToStart, newlyHeld, invalidatedBy, drainedItems, pathsOverlap, unblockedItems, buildWaitsFor, staleBuilds, readsPath }`)()
+const sched = new Function(`${schedSrc}\nreturn { nextToStart, newlyHeld, invalidatedBy, drainedItems, pathsOverlap, unblockedItems, buildWaitsFor, staleBuilds, readsPath, checkKeysOf, argsDigestOf, fnv1a32 }`)()
 const IT = (id, files, extra = {}) => ({ id, files, after: [], shares: [], checks: [], ...extra })
 const ST = (items, statuses = {}) => Object.fromEntries(items.map(it => [it.id, { status: 'pending', touched: false, ...(statuses[it.id] || {}) }]))
 
@@ -1657,20 +1657,36 @@ async function runDelayed(args, reply, delays) {
 }
 const builds = calls => calls.filter(c => c.startsWith('item-implementer:build-dev:'))
 
+const rechecks = calls => calls.filter(c => /^item-verifier:build-dev:a\d+:rebuild:/.test(c))
 for (const [when, delays] of [['after the build is done', { 'instrument-blindness-reviewer': 120 }], ['while the build runs', { 'item-implementer:build-dev:a1': 150 }]]) {
-  test(`items: a fix that lands on what a build read ${when} re-runs the build after it`, async () => {
+  test(`items: a fix that lands on what a build read ${when} re-runs the build's checks after it, and no implementer (#505)`, async () => {
     const { result, calls, spans, prompts } = await runDelayed(BUILD_ITEMS, buildReply('ForgePact/plugin/a.cpp'), delays)
     assert.equal(result.outcome, 'PASS')
-    const b = builds(calls)
-    assert.equal(b.length, 2, `the build ran ${b.length} time(s): ${calls.join(', ')}`)
-    assert.ok(spans[b[1]][0] > spans['fix-implementer:fix-1:r0'][1], 'the second build started before the fix landed')
-    assert.match(prompts[b[1]], /fix-1 committed `ForgePact\/plugin\/a\.cpp`/)
+    assert.equal(builds(calls).length, 1, `the build's implementer ran again: ${calls.join(', ')}`)
+    const rc = rechecks(calls)
+    assert.equal(rc.length, 1, `the build's checks re-ran ${rc.length} time(s): ${calls.join(', ')}`)
+    assert.ok(spans[rc[0]][0] > spans['fix-implementer:fix-1:r0'][1], 'the re-check started before the fix landed')
+    assert.match(prompts[rc[0]], /fix-1 committed `ForgePact\/plugin\/a\.cpp`/)
+    assert.doesNotMatch(prompts[rc[0]], /--reuse/, 'a re-check has no implementer run to reuse')
     const row = result.items.find(i => i.id === 'build-dev')
     assert.equal(row.rebuilds, 1)
     assert.equal(row.status, 'done')
-    assert.ok(spans['verifier:r0'][0] > spans[b[1]][1], 'the gate ran on the old build')
+    assert.ok(spans['verifier:r0'][0] > spans[rc[0]][1], 'the gate ran on the old build')
   })
 }
+
+test('items: a rebuild whose re-check fails goes to an implementer with what failed, uncharged for the re-check (#505)', async () => {
+  const reply = buildReply('ForgePact/plugin/a.cpp')
+  const fail = { verdict: 'IMPL-DEFECT', criteria: [{ criterion: 'dev build', status: 'fail', evidence: 'LNK2019 unresolved Foo' }], pending_human: [] }
+  const { result, calls, prompts } = await runDelayed(BUILD_ITEMS, (label, ...rest) => /^item-verifier:build-dev:a\d+:rebuild:/.test(label) ? fail : reply(label, ...rest),
+    { 'instrument-blindness-reviewer': 120 })
+  assert.equal(result.outcome, 'PASS', JSON.stringify(result.items))
+  const b = builds(calls)
+  assert.deepEqual(b, ['item-implementer:build-dev:a1:r0', 'item-implementer:build-dev:a3:r0'], calls.join(', '))
+  assert.match(prompts[b[1]], /LNK2019 unresolved Foo/)
+  assert.match(prompts[b[1]], /fix-1 committed `ForgePact\/plugin\/a\.cpp`/)
+  assert.equal(result.items.find(i => i.id === 'build-dev').status, 'done')
+})
 
 test('items: a fix that lands during an attempt whose checks then fail is in the retry, so no extra rebuild (PR #382 review)', async () => {
   let checks = 0
@@ -1699,8 +1715,9 @@ test('items: a relaunch re-runs a build State left done once this launch\'s fix 
     state: '## State\nround: 1\nitems: src=done; build-dev=done\n' }
   const { result, calls } = await runDelayed(args, buildReply('ForgePact/plugin/a.cpp'), {})
   assert.equal(result.outcome, 'PASS')
-  assert.deepEqual(builds(calls), ['item-implementer:build-dev:a1:r1'], calls.join(', '))
-  assert.ok(calls.indexOf('fix-implementer:fix-1:r1') < calls.indexOf('item-implementer:build-dev:a1:r1'), calls.join(', '))
+  assert.deepEqual(builds(calls), [], calls.join(', '))
+  assert.deepEqual(rechecks(calls), ['item-verifier:build-dev:a1:rebuild:r1'], calls.join(', '))
+  assert.ok(calls.indexOf('fix-implementer:fix-1:r1') < calls.indexOf('item-verifier:build-dev:a1:rebuild:r1'), calls.join(', '))
   assert.match(result.items.find(i => i.id === 'build-dev').reason, /^$/)
 })
 
@@ -1710,8 +1727,11 @@ test('items: two builds that commit into what the other reads park at the rebuil
     { id: 'plugin', files: ['ForgePact/plugin/gen.h'], checks: ['`cd ForgePact && cmd //c "plugin_build\build.bat dev"` exits 0 (reads `ForgePact/panel/dist/**`)'], build_reads: ['ForgePact/panel/dist/**'] },
   ] }
   const commits = path => ({ ...DONE, commits: [{ repo: 'ForgePact', sha: 'x' }], paths: [path], flags: '' })
+  // Each re-check fails, so every rebuild reaches an implementer that commits again.
+  const fail = { verdict: 'IMPL-DEFECT', criteria: [{ criterion: 'build', status: 'fail', evidence: 'stale' }], pending_human: [] }
   const { result, calls } = await runDelayed(args, itemsReply({
-    'item-implementer:panel:': commits('ForgePact/panel/dist/x.js'), 'item-implementer:plugin:': commits('ForgePact/plugin/gen.h') }), {})
+    'item-implementer:panel:': commits('ForgePact/panel/dist/x.js'), 'item-implementer:plugin:': commits('ForgePact/plugin/gen.h'),
+    'item-verifier:panel:': l => /:rebuild:/.test(l) ? fail : PASS, 'item-verifier:plugin:': l => /:rebuild:/.test(l) ? fail : PASS }), {})
   assert.equal(result.outcome, 'PARKED')
   assert.ok(result.items.some(i => /^budget: re-run 5 times/.test(i.reason)), JSON.stringify(result.items.map(i => i.reason)))
   assert.ok(calls.filter(c => c.startsWith('item-implementer:')).length <= 12, `${calls.length} calls`)
@@ -2580,4 +2600,85 @@ test('items: a never-run deferred reviewer reads the gate even when the launch l
   assert.ok(!calls.some(c => c.startsWith('item-implementer:')), 'control: nothing landed')
   assert.equal(calls.filter(c => c.startsWith('docs-sync-reviewer:')).length, 1, calls.join(', '))
   assert.ok(!calls.some(c => c.startsWith('sdk-contract-reviewer:')), 'a reviewer already clean has nothing new to read')
+})
+
+// --- 2n: launch args from a file (#547) --------------------------------------
+//
+// The digest and the check keys are computed by workorder_brief.py too;
+// tests/test_workorder_launch_args.py pins its side to these same values.
+test('args file: the check keys and the digest are the values workorder_brief.py computes', () => {
+  assert.deepEqual(sched.checkKeysOf(['`npm test` exits 0']), ['dc5964d6'])
+  assert.deepEqual(sched.checkKeysOf(['`grep x docs/c.md` prints 1']), ['c0e7d669'])
+  assert.deepEqual(sched.checkKeysOf(['`py -3 -c "print(\'é\')"` exits 0 (reads `docs/x.md`)', 'x `npm test` y']), ['4e60a3a9', '70ee3a08', 'dc5964d6'])
+  assert.equal(sched.argsDigestOf({ b: [1, 'é😀'], a: { y: null, x: true } }), `fnv1a32:${sched.fnv1a32('{"a":{"x":true,"y":null},"b":[1,"é😀"]}')}:39`)
+})
+
+test('args file: an item with check_keys holds the same items for a PLAN-DEFECT as one with its check texts', () => {
+  const texts = [IT('bad', ['a.css'], { checks: ['`npm test` exits 0'] }), IT('same-check', ['e.css'], { checks: ['`npm test` passes'] }), IT('free', ['f.md'], { checks: ['`npm run lint` exits 0'] })]
+  const keyed = texts.map(it => ({ ...it, checks: undefined, checkKeys: sched.checkKeysOf(it.checks) }))
+  assert.deepEqual(sched.invalidatedBy(keyed, ST(keyed), 'bad'), sched.invalidatedBy(texts, ST(texts), 'bad'))
+  assert.deepEqual(sched.invalidatedBy(keyed, ST(keyed), 'bad'), ['same-check'])
+})
+
+const compactArgs = args => ({ ...args, items: args.items.map(({ checks, ...it }) => ({ ...it, check_count: checks.length, check_keys: sched.checkKeysOf(checks) })) })
+const fileReply = (relay, base = itemsReply()) => (label, prompt, opts) => label.startsWith('load-args:') ? relay(label, prompt, opts) : base(label, prompt, opts)
+
+test('args file: the loader\'s relay runs the launch, and keys passed inline win over the file\'s', async () => {
+  const fileArgs = compactArgs(ITEMS_BASE)
+  const inline = { slug: 'zz', argsPath: 'C:/wt/here/.claude/workorders/.rounds/zz/launch-args.json', argsDigest: sched.argsDigestOf(fileArgs), maxParallel: 1 }
+  let loaderPrompt = '', loaderOpts = null
+  const { result, calls, spans } = await runTimed(inline, fileReply((label, prompt, opts) => { loaderPrompt = prompt; loaderOpts = opts; return { exit_code: 0, args: JSON.parse(JSON.stringify(fileArgs)) } }))
+  assert.equal(result.outcome, 'PASS', JSON.stringify(result))
+  assert.equal(calls[0], 'load-args:1')
+  assert.match(loaderPrompt, /py -3 tools\/workorder_brief\.py --read-launch-args "C:\/wt\/here\/\.claude\/workorders\/\.rounds\/zz\/launch-args\.json" --slug zz/)
+  assert.equal(loaderOpts.model, 'haiku')
+  assert.equal(calls.filter(c => c.startsWith('item-verifier:')).length, 3, 'check_count drives the item checks')
+  assert.ok(!overlaps(spans, impl(calls, 'a'), impl(calls, 'b')), 'the inline maxParallel 1 won')
+  assert.equal(result.record.slug, 'zz')
+})
+
+test('args file: a relay that does not match the digest is retried at sonnet, then refused before any work', async () => {
+  const fileArgs = compactArgs(ITEMS_BASE)
+  const inline = { slug: 'zz', argsPath: 'p.json', argsDigest: sched.argsDigestOf(fileArgs) }
+  const reworded = { ...fileArgs, goalExcerpt: 'g.' }
+  const models = []
+  let r = await runTimed(inline, fileReply((label, prompt, opts) => { models.push(opts.model); return { exit_code: 0, args: reworded } }))
+  assert.equal(r.result.outcome, 'BAD-ARGS')
+  assert.match(r.result.detail, /digest/)
+  assert.deepEqual(models, ['haiku', 'sonnet'])
+  assert.deepEqual(r.calls, ['load-args:1', 'load-args:2'])
+  // The second try's correct relay runs the launch.
+  r = await runTimed(inline, fileReply(label => ({ exit_code: 0, args: label === 'load-args:1' ? reworded : fileArgs })))
+  assert.equal(r.result.outcome, 'PASS')
+})
+
+test('args file: a refusal from --read-launch-args, or no digest, is BAD-ARGS with nothing else spawned', async () => {
+  const stale = await runTimed({ slug: 'zz', argsPath: 'p.json', argsDigest: 'fnv1a32:00000000:2' },
+    fileReply(() => ({ exit_code: 6, raw_output: 'workorder_brief: .claude/workorders/zz-plan.md changed after p.json was written' })))
+  assert.equal(stale.result.outcome, 'BAD-ARGS')
+  assert.match(stale.result.detail, /exited 6: .*changed after/)
+  assert.deepEqual(stale.calls, ['load-args:1'], 'a stale file is not retried')
+  const bare = await runTimed({ slug: 'zz', argsPath: 'p.json' }, fileReply(() => assert.fail('no loader without a digest')))
+  assert.equal(bare.result.outcome, 'BAD-ARGS')
+  assert.deepEqual(bare.calls, [])
+})
+
+// --- #505: same-file items ---------------------------------------------------
+test('items: a per-commit reviewer waits while an item editing the same file is still queued, then reads both commits once', async () => {
+  const shared = { ...ITEMS_BASE, reviewers: { 'instrument-blindness-reviewer': 'clean' }, items: [
+    { id: 'x', files: ['ForgePact/plugin/m.cpp'], checks: ['`grep x ForgePact/plugin/m.cpp` prints 1'] },
+    { id: 'y', files: ['ForgePact/plugin/m.cpp'], shares: ['x'], checks: ['`grep y ForgePact/plugin/m.cpp` prints 1'] },
+  ] }
+  const commits = (id, path) => ({ ...DONE, commits: [{ repo: 'ForgePact', sha: `s-${id}` }], paths: [path], flags: '' })
+  const reply = path2 => itemsReply({ 'item-implementer:x:': commits('x', 'ForgePact/plugin/m.cpp'), 'item-implementer:y:': commits('y', path2) })
+  const { result, calls, spans } = await runTimed(shared, reply('ForgePact/plugin/m.cpp'))
+  assert.equal(result.outcome, 'PASS')
+  const passes = calls.filter(c => c.startsWith('instrument-blindness-reviewer:'))
+  assert.equal(passes.length, 1, calls.join(', '))
+  assert.ok(spans[passes[0]][0] > spans[impl(calls, 'y')][1], 'the pass started before y landed')
+  // Control: items on different files review as they land.
+  const apart = { ...shared, items: [shared.items[0], { ...shared.items[1], files: ['ForgePact/plugin/n.cpp'], shares: [], after: ['x'] }] }
+  const r = await runTimed(apart, reply('ForgePact/plugin/n.cpp'))
+  assert.equal(r.result.outcome, 'PASS')
+  assert.equal(r.calls.filter(c => c.startsWith('instrument-blindness-reviewer:')).length, 2, r.calls.join(', '))
 })
