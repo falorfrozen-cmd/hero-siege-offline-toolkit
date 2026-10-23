@@ -132,7 +132,7 @@
     "scripts": [
       {
         "name": "gml_Script_LootGroundInit",
-        "role": "on a tower floor (room name with the tower's prefix, the IsChaosTower test, or gDataProtected[12] true) outside the excluded rooms, while lootExplosionGiven reads false, appends the new ground item's struct to lootExplosionList and removes the ground instance",
+        "role": "on a tower floor (room name with the tower's prefix, the IsChaosTower test, or gDataProtected[12] true) outside the excluded rooms, while lootExplosionGiven reads false, appends the new ground item's struct to lootExplosionList unless one item-kind test exempts it; that the call after the append destroys the ground instance is an inference (see not_established)",
         "status": "static_reading"
       },
       {
