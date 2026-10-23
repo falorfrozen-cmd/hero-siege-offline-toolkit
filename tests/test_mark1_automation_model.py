@@ -118,9 +118,9 @@ class DrainTests(unittest.TestCase):
         self.assertEqual(model.replenish_answer(0, 4, 1000, 100, 1), -1000)
 
     def test_drain_target_scaled_by_the_measured_unit(self):
-        # Stats live 3's `regen-units`: one unit of id 42's answer is 0.874
-        # mana a second, so the answer divides by it.
-        self.assertEqual(model.REPLENISH_UNIT, Fraction(874, 1000))
+        # Stats live 3's S7 minus S8: one drained unit of id 42's answer is
+        # 0.745 mana a second (35.05 over 47.04), so the answer divides by it.
+        self.assertEqual(model.REPLENISH_UNIT, Fraction(745, 1000))
         unit = model.REPLENISH_UNIT
         for n in (1, 4):
             with self.subTest(columns=n):
@@ -130,7 +130,7 @@ class DrainTests(unittest.TestCase):
                                  n * Fraction(15) / unit)
                 # In mana a second, a true 1% of the maximum per skill.
                 self.assertEqual(model.drain_per_second(n, model.DRAIN_PCT_PER_SECOND, MAX) * unit, 15 * n)
-        self.assertAlmostEqual(float(model.replenish_answer(30, 1, MAX)), 30 - 15 / 0.874, places=9)
+        self.assertAlmostEqual(float(model.replenish_answer(30, 1, MAX)), 30 - 15 / 0.745, places=9)
         # Still clamped at minus the maximum.
         self.assertEqual(model.replenish_answer(0, 4, 1000, 100), -1000)
         self.assertEqual(model.replenish_answer(0, 4, MAX, percent=25), -MAX)

@@ -85,13 +85,18 @@ speed).
     uninvested 2% baseline the rule below is set against.
   - **About 0.883 mana a second per unit of id 42's answer** (`regen-units`):
     one 2.98 s window, read from HUD crops.
-- **One unit of the replenish answer is 0.874 mana a second**
-  (`REPLENISH_UNIT`; Stats live 3's `regen-units`, read in process: 122.417
-  mana a second at an answer of 140). The consumer's id-42 answer divides
-  the drain by it (the owner's choice, 2026-10-23), so each automated skill
-  takes a true 1.0% of maximum mana a second. That per-second rate is the
-  arithmetic's and is not re-measured live: Live 3 measured the build before
-  it, whose unit of 1.0 took about 0.87% a second.
+- **One drained unit of the replenish answer is 0.745 mana a second**
+  (`REPLENISH_UNIT`; Stats live 3, read in process, S7 minus S8: the regen
+  at the answer's own 140 was 122.417 mana a second (S7), and with 47.04
+  units drained, the answer at 92.96, it was 87.37 (S8), so 35.05 mana a
+  second over 47.04 drained units). Beside it: S7 alone reads 0.874 a unit
+  of the answer, S8 alone 0.940, Live 2's halving about 0.877 and S9's
+  below-zero window 0.887; the readings disagree. The consumer's id-42
+  answer divides the drain by 0.745 (the owner's choices, 2026-10-23), so
+  each automated skill takes about 1.0% of maximum mana a second; that rate
+  is not measured in a game session yet. The build Live 3 measured, with a
+  unit of 1.0, took about 0.745% a second per skill, read directly (S7
+  minus S8); the 0.87% recorded for it is inferred from S7's 0.874.
 - **The drain is the shipped cost**, the owner's choice (2026-10-22), at
   1.0% of maximum mana a second per automated skill: Live 2's numbers do not
   argue for another percent (on Sorak two automated skills take 47 of 257,
@@ -143,13 +148,13 @@ A pure function of numbers, with exact fractions
 - `interval_ms(ability_cooldown, haste, fcr, base_cast_seconds=1)`: the two
   added, in milliseconds. Before the plugin has read either stat it uses 0
   for both, which is the longest interval.
-- `drain_per_second(proc_columns, percent, max_mana, unit=0.874)`: how much
+- `drain_per_second(proc_columns, percent, max_mana, unit=0.745)`: how much
   the drain takes off the replenish answer, in units of that answer,
-  `columns × percent / 100 × max / unit`. Divided, because one unit is 0.874
-  mana a second, so one mana a second takes 1 / 0.874 units; in mana a second
+  `columns × percent / 100 × max / unit`. Divided, because one drained unit
+  is 0.745 mana a second, so one mana a second takes 1 / 0.745 units; in mana a second
   (`unit=1`) it is `columns × percent / 100 × max` whatever the unit. A unit
   that is not positive is refused.
-- `replenish_answer(original, proc_columns, max_mana, percent=1, unit=0.874)`:
+- `replenish_answer(original, proc_columns, max_mana, percent=1, unit=0.745)`:
   the answer the set's consumer gives for id 42, the original less the drain
   and never below minus the maximum. No proc column leaves the original.
 - `cut_max_mana(proc_columns, cut_pct, max_mana)`: the alternative's answer
@@ -185,7 +190,7 @@ player's own casts.
 The cases file holds the interval (no cooldown, Healing Zone's 14 s at
 haste 0, 100 and 300, Faster Cast Rate -50, 0, 100 and the floor), the drain
 (0 to 4 skills at 1% of 1500 at unit 1, mana a second; 1 and 4 skills at the
-shipped unit 0.874, Stats live 2's Sorak numbers at it, and an overridden
+shipped unit 0.745, Stats live 2's Sorak numbers at it, and an overridden
 percent on a pool of 100000 and on 1000 where the floor at minus the maximum
 decides the answer) and the cut (0 to 4 skills). ForgePact's C++ cores are
 tested against the same file.

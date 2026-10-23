@@ -65,12 +65,13 @@ DRAIN_PCT_PER_SECOND = Fraction(1)
 #: number, proposal).
 MAX_MANA_CUT_PCT = 20
 #: How many mana per second one unit of the replenish answer (id 42) is.
-#: Measured: 0.874, in process, by Stats live 3's `regen-units` (122.417 mana a
-#: second at an answer of 140). The drain divides by it, so each automated
-#: skill takes a true DRAIN_PCT_PER_SECOND % of maximum mana a second (the
-#: owner's choice, 2026-10-23); that rate is this arithmetic's, not re-measured
-#: live. ForgePact's `kMark1ReplenishUnit` is the same.
-REPLENISH_UNIT = Fraction(874, 1000)
+#: Measured: 0.745 per drained unit, in process, Stats live 3's S7 minus S8
+#: (35.05 mana a second over 47.04 drained units; S7 alone read 0.874 a unit of
+#: the answer). The drain divides by it, so each automated skill takes about
+#: DRAIN_PCT_PER_SECOND % of maximum mana a second (the owner's choice,
+#: 2026-10-23); that rate is not measured in a game session yet. ForgePact's
+#: `kMark1ReplenishUnit` is the same.
+REPLENISH_UNIT = Fraction(745, 1000)
 
 # ---- Assumptions the reference table is built on (Live 1 `regen-units`) ----
 
