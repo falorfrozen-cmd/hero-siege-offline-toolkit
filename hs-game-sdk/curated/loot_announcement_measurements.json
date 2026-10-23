@@ -1,5 +1,5 @@
 {
-  "$schema_note": "Hand-curated record of how Hero Siege announces a rare ground drop in chat, for ForgePact#17 (Loot announcements). NOT mechanically extracted (see hs-game-sdk/curated/satanic_zone.json for why curated/ exists). Data only: no binding is generated from this file. Every entry carries its own `status`: `static_reading` (read from the compiled game locally and paraphrased in our own words; no script text is kept anywhere), `inference`, `not_established`, or `measured` (`route.status`, from ForgePact#17's Live procedure 3, and the parts of `chaos_tower_loot_burst` its `live` block lists, from capture forgepact-227-chaos-tower-announce-live-1). `scripts` is the announcement chain by SDK name, in call order. `rarity_key` is the itemInfoStruct key the closure is taken to read: that key \"27\" holds the rarity is measured (docs/RUNTIME_DATA_MODELS.md section 16.4), but that the closure reads it is an inference from the codes it compares, because the key strings were not read. `rarity_codes_in_closure` lists every rarity code the closure compares on a branch of its own, and for each whether the online path announces it; the list is what was read, and `announced_online` is `not_established` where the reading does not say. `route` is the call ForgePact's `lootann` ships to show the line offline: `server` (chosen 2026-10-04 after Live procedures 1 and 3; the game's own path, `method`, could not be tested offline (the probe's anon control did not resolve)). The argument is ForgePact docs/loot-announcement-research.md; the shared facts are docs/RUNTIME_DATA_MODELS.md sections 8.6 and 16.10. `chaos_tower_loot_burst` (ForgePact#227) records how a Chaos Tower floor holds its new ground items in Controller_obj.lootExplosionList until gml_Script_LootExplosion puts them back on the ground at the floor's end (docs/RUNTIME_DATA_MODELS.md section 16.14), with its own `status` and a `not_established` list.",
+  "$schema_note": "Hand-curated record of how Hero Siege announces a rare ground drop in chat, for ForgePact#17 (Loot announcements). NOT mechanically extracted (see hs-game-sdk/curated/satanic_zone.json for why curated/ exists). Data only: no binding is generated from this file. Every entry carries its own `status`: `static_reading` (read from the compiled game locally and paraphrased in our own words; no script text is kept anywhere), `inference`, `not_established`, or `measured` (`route.previous.status`, from ForgePact#17's Live procedure 3, `chat_line.measured_call`, from the dungeon chest's Live procedure 1b, and the parts of `chaos_tower_loot_burst` its `live` block lists, from capture forgepact-227-chaos-tower-announce-live-1). `scripts` is the announcement chain by SDK name, in call order. `rarity_key` is the itemInfoStruct key the closure is taken to read: that key \"27\" holds the rarity is measured (docs/RUNTIME_DATA_MODELS.md section 16.4), but that the closure reads it is an inference from the codes it compares, because the key strings were not read. `rarity_codes_in_closure` lists every rarity code the closure compares on a branch of its own, and for each whether the online path announces it; the list is what was read, and `announced_online` is `not_established` where the reading does not say. `route` is the call ForgePact's `lootann` ships to show the line offline: `chatcolour` since ForgePact#228 (2026-10-23; ChatAddMessage by name in dungeon-chest shape 8's argument kinds, the item name in its rarity's announcement colour; `static_reading` until #228's live session measures the colours), with `route.previous` the `server` route it replaced and now falls back to (chosen 2026-10-04 after Live procedures 1 and 3; the game's own path, `method`, could not be tested offline (the probe's anon control did not resolve)). `chat_line` (ForgePact#228) records how ChatAddMessage builds and draws a line: its fifteen parameters in order, the segments and their colours, and that a line carries two text colours and no inline markup. `rarity_colours` is the game's rarity colour table (GetRarityColor, codes 1-11), `announcement_colours` the text colour the online announcement passes per rarity, and `announcement_sender_colour` its sender colour. Colours are GameMaker's decimal blue-green-red integers (`bgr`) with `#RRGGBB` (`rgb`) beside them; docs/RUNTIME_DATA_MODELS.md sections 8.6 and 16.4 carry the same facts. The argument is ForgePact docs/loot-announcement-research.md; the shared facts are docs/RUNTIME_DATA_MODELS.md sections 8.6 and 16.10. `chaos_tower_loot_burst` (ForgePact#227) records how a Chaos Tower floor holds its new ground items in Controller_obj.lootExplosionList until gml_Script_LootExplosion puts them back on the ground at the floor's end (docs/RUNTIME_DATA_MODELS.md section 16.14), with its own `status` and a `not_established` list.",
   "source": [
     {
       "path": "ForgePact/docs/loot-announcement-research.md",
@@ -16,6 +16,14 @@
     {
       "path": "docs/RUNTIME_DATA_MODELS.md",
       "section": "16.14 The Chaos Tower's loot burst: a floor's drops wait for its end"
+    },
+    {
+      "path": "docs/RUNTIME_DATA_MODELS.md",
+      "section": "16.4 Rarity codes"
+    },
+    {
+      "path": "ForgePact/docs/dungeon-chest-research.md",
+      "section": "Chat route"
     }
   ],
   "scripts": [
@@ -92,12 +100,125 @@
     }
   ],
   "route": {
-    "name": "server",
-    "status": "measured",
-    "chosen": "2026-10-04",
-    "session": "ForgePact#17 Live procedure 3",
-    "sink": "ChatAddServerMessage by name with '<character> found <item name>' (itemInfoStruct[\"28\"], the player's name), the red SERVER: line",
-    "why": "the game's own path (method, the anon@1138 closure) was not reachable to test this session: the probe's anon control did not resolve (`anon rows resolved: 0 of 2`, instrument-blind), so whether the closure is bound on the ground item is not established; server ships per the owner's rule (route-method-2 not pass)."
+    "name": "chatcolour",
+    "status": "static_reading",
+    "chosen": "2026-10-23",
+    "issue": "falorfrozen-cmd/ForgePact#228",
+    "sink": "gml_Script_ChatAddMessage by name, the local Player_obj as self, in dungeon-chest shape 8's argument kinds: sender part '<character> found' (the player's name, else 'You'), text part the item name (itemInfoStruct[\"28\"]), sender colour 11974842 (the game's grey chat text), text colour the online announcement's colour for the rarity (9764608 Heroic, 10681599 Angelic, 7224024 Unholy); when that call refuses, the server route's red SERVER: line is shown instead",
+    "why": "ForgePact#228 asks for the item name in its rarity's colour; ChatAddServerMessage passes red 255 for both colours and takes none (static reading), while a line carries exactly two text colours (sender and text, no inline markup; static reading), so the item name alone is coloured by putting it in the text part. That ChatAddMessage called by name with another sender shows a line is measured: dungeon-chest shape 8 (ForgePact docs/dungeon-chest-research.md, Live procedure 1b). The colours a player sees are not established until #228's live session; this status moves to measured then.",
+    "previous": {
+      "name": "server",
+      "status": "measured",
+      "chosen": "2026-10-04",
+      "session": "ForgePact#17 Live procedure 3",
+      "sink": "ChatAddServerMessage by name with '<character> found <item name>' (itemInfoStruct[\"28\"], the player's name), the red SERVER: line",
+      "why": "the game's own path (method, the anon@1138 closure) was not reachable to test this session: the probe's anon control did not resolve (`anon rows resolved: 0 of 2`, instrument-blind), so whether the closure is bound on the ground item is not established; server ships per the owner's rule (route-method-2 not pass). Since ForgePact#228 it is chatcolour's fallback."
+    }
+  },
+  "chat_line": {
+    "script": "gml_Script_ChatAddMessage",
+    "status": "static_reading",
+    "read": "2026-10-23, local Ghidra project, paraphrased in our own words",
+    "issue": "falorfrozen-cmd/ForgePact#228",
+    "parameters": [
+      "sender name",
+      "text",
+      "sender colour",
+      "text colour (omitted: 11974842, #BAB8B6)",
+      "message type",
+      "channel",
+      "account id",
+      "language",
+      "time stamp",
+      "character slot",
+      "DLC bitmap",
+      "platform",
+      "platform id",
+      "platform name",
+      "region"
+    ],
+    "message_struct": {
+      "constructor": "s_ChatMessageData",
+      "fields": [
+        "name",
+        "msgNameColor",
+        "messageColor",
+        "messageType",
+        "channelType",
+        "timestamp",
+        "language",
+        "commandList",
+        "msgItemData"
+      ],
+      "note": "the fields named in the reading, not the full list"
+    },
+    "delivery": "added to every UI_Chat_List_obj list of its channel (not a message type 3 line while chatShowItemDropMessages is off), and to the in-game feed (IngameChatFeedAddLatest) only when the channel is -1 or enableGeneralChat is on",
+    "draw_script": "gml_Script_DrawChatMessage@anon@13887@s_ChatMessageData@DefineChatMessageData (the anon number moves per patch, docs/RUNTIME_DATA_MODELS.md section 5.3)",
+    "segments": [
+      {
+        "part": "time stamp",
+        "colour": {"bgr": 8421504, "rgb": "#808080"}
+      },
+      {
+        "part": "sender",
+        "colour": "msgNameColor (the sender colour)"
+      },
+      {
+        "part": "platform badges",
+        "colour": null
+      },
+      {
+        "part": "separator",
+        "colour": {"bgr": 7844807, "rgb": "#C7B377"}
+      },
+      {
+        "part": "text, one character at a time with emoji images between characters",
+        "colour": "messageColor (the text colour); the default grey 11974842 instead when msgNameColor is exactly 6776816 (#F06767); an item link at the text's start sets it to that item's GetItemColor"
+      }
+    ],
+    "two_colours": "a line carries two text colours, the sender's and the text's; nothing in the text changes its colour (no colour command exists for the text)",
+    "server_message": {
+      "script": "gml_Script_ChatAddServerMessage",
+      "note": "arguments (text, channel): passes the sender (measured \"SERVER\"), red 255 (#FF0000) as both colours, message type 1 and the channel (default 0); no colour can be passed through it",
+      "status": "static_reading"
+    },
+    "measured_call": {
+      "status": "measured",
+      "session": "ForgePact docs/dungeon-chest-research.md, Live procedure 1b, shape 8",
+      "note": "called by name with sender \"ForgePact\", both colours 0, message type and channel int64 0, two reals 0, a [hh:mm] stamp and six undefined: showed '[00:49] ForgePact : ForgePact chat test 8', no SERVER: prefix, no crash; the line's colour was not recorded"
+    },
+    "not_established": [
+      "that the bottom-left feed draws through DrawChatMessage (inference: the measured feed lines show a stamp and a sender)",
+      "the separator's exact characters for message type 0",
+      "what a click on a sender name in the opened chat window does offline"
+    ]
+  },
+  "rarity_colours": [
+    {"code": 1, "rarity": "Common", "bgr": 16777215, "rgb": "#FFFFFF", "source": "gml_Script_GetRarityColor", "status": "static_reading", "note": "10982553 (#9994A7) when the second argument is non-zero; what that argument means is not established"},
+    {"code": 2, "rarity": "Superior", "bgr": 12745262, "rgb": "#2E7AC2", "source": "gml_Script_GetRarityColor", "status": "static_reading"},
+    {"code": 3, "rarity": "Rare", "bgr": 698851, "rgb": "#E3A90A", "source": "gml_Script_GetRarityColor", "status": "static_reading"},
+    {"code": 4, "rarity": null, "bgr": 215270, "rgb": "#E64803", "source": "gml_Script_GetRarityColor", "status": "static_reading", "note": "no item with this code observed"},
+    {"code": 5, "rarity": "Mythic", "bgr": 15406513, "rgb": "#B115EB", "source": "gml_Script_GetRarityColor", "status": "static_reading"},
+    {"code": 6, "rarity": "Satanic", "bgr": 1447638, "rgb": "#D61616", "source": "gml_Script_GetRarityColor", "status": "static_reading"},
+    {"code": 7, "rarity": "Angelic", "bgr": 10092542, "rgb": "#FEFF99", "source": "gml_Script_GetRarityColor", "status": "static_reading"},
+    {"code": 8, "rarity": null, "bgr": 1892620, "rgb": "#0CE11C", "source": "gml_Script_GetRarityColor", "status": "static_reading", "note": "no item with this code observed"},
+    {"code": 9, "rarity": "Heroic", "bgr": 9764608, "rgb": "#00FF94", "source": "gml_Script_GetRarityColor", "status": "static_reading"},
+    {"code": 10, "rarity": "Unholy", "bgr": 7224024, "rgb": "#D83A6E", "source": "gml_Script_GetRarityColor", "status": "static_reading"},
+    {"code": 11, "rarity": null, "bgr": 7844807, "rgb": "#C7B377", "source": "gml_Script_GetRarityColor", "status": "static_reading", "note": "no item with this code observed"}
+  ],
+  "rarity_colours_note": "GetRarityColor answers white for any other code; gml_Script_GetItemColor gives an ordinary equipment item's name GetRarityColor of its itemInfoStruct[\"27\"], other item kinds have branches of their own (static reading)",
+  "announcement_colours": [
+    {"code": 9, "rarity": "Heroic", "bgr": 9764608, "rgb": "#00FF94", "chosen_by": "GetRarityColor(9), on the closure's branch for \"27\" 9", "status": "static_reading"},
+    {"code": 7, "rarity": "Angelic", "bgr": 10681599, "rgb": "#FFFCA2", "chosen_by": "a fixed colour on the closure's branch for \"27\" 7 or tier \"32\" 6; not the table's Angelic 10092542", "status": "static_reading"},
+    {"code": 10, "rarity": "Unholy", "bgr": 7224024, "rgb": "#D83A6E", "chosen_by": "a fixed colour on the closure's branch for \"27\" 10, equal to GetRarityColor(10)", "status": "static_reading"},
+    {"code": 6, "rarity": "Satanic", "bgr": 1447638, "rgb": "#D61616", "chosen_by": "a Satanic item of tier \"32\" 5 (SS) takes the Heroic branch, with GetRarityColor(6)", "status": "static_reading", "note": "whether a Satanic drop is announced online is not established (rarity_codes_in_closure); ForgePact does not announce it"}
+  ],
+  "announcement_colours_note": "the colour NetworkSendChatMessageIngame passes as the text colour; with message type 3 the text is GetItemDropMessage's ([Softcore] or [Hardcore] tag, the finder's name, the localized just_found phrase, the loot name in square brackets), all in that one colour, so online colours the whole text. ForgePact#228's chatcolour route uses the 9, 7 and 10 colours for the item name alone",
+  "announcement_sender_colour": {
+    "bgr": 18687,
+    "rgb": "#FF4800",
+    "note": "the sender colour NetworkSendChatMessageIngame passes (orange); the sender name comes from a protected-store read whose value is not established. ForgePact#228 does not use it: its sender part is the grey 11974842",
+    "status": "static_reading"
   },
   "chaos_tower_loot_burst": {
     "status": "static_reading",

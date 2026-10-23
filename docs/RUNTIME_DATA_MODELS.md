@@ -2051,9 +2051,61 @@ mostly screens that block play; `Enemy_Aggroable_obj` is the parent of exactly
   string `"SERVER"`, the text, two reals, two int64s, two reals, a `[hh:mm]`
   time string and six `undefined`; then `IngameChatFeedAddLatest` with the
   player as `self` and two arguments (a reference and a bool). **Measured**
-  (count-only hooks on both, same session). Whether `ChatAddMessage` called
-  directly with another sender shows a line without the `SERVER:` prefix is
-  **not established**.
+  (count-only hooks on both, same session). `ChatAddMessage` called directly
+  with another sender does show a line without the `SERVER:` prefix:
+  **measured** in the dungeon chest's Live procedure 1b (shape 8, next
+  this section's last bullet).
+- **How `ChatAddMessage` builds a line** (ForgePact#228). **Static reading**
+  (2026-10-23, local Ghidra project, our own words). Its fifteen parameters,
+  in order: sender name, text, sender colour, text colour, message type,
+  channel, account id, language, time stamp, character slot, DLC bitmap,
+  platform, platform id, platform name, region. An omitted text colour
+  defaults to 11974842 (#BAB8B6, the game's grey chat text). It builds one
+  `s_ChatMessageData` (fields `name`, `msgNameColor` from the sender colour,
+  `messageColor` from the text colour, `messageType`, `channelType`,
+  `timestamp`, `language`, `commandList`, `msgItemData`, and more), adds it to
+  every `UI_Chat_List_obj` list of its channel (except a message type 3 line
+  while the player's `chatShowItemDropMessages` option is off), and adds it to
+  the bottom-left in-game feed (`IngameChatFeedAddLatest`) only when the
+  channel is -1 or the `enableGeneralChat` option is on.
+- **How a chat line is drawn: two text colours, no inline markup**
+  (ForgePact#228). **Static reading**, same session. The message's update
+  pass turns emoji codes in the text (`chatEmojiMap`) into image commands,
+  and a text that starts with an item link (item data encoded in the text)
+  into `msgItemData`, whose `GetItemColor` then becomes the text colour and
+  whose tooltip shows on hover. `DrawChatMessage` (an `s_ChatMessageData`
+  method, SDK name
+  `gml_Script_DrawChatMessage@anon@13887@s_ChatMessageData@DefineChatMessageData`,
+  whose anon number moves per patch, § 5.3) draws, each with a black shadow:
+  the time stamp in 8421504 (#808080), the sender in `msgNameColor`, platform
+  badges, a separator in 7844807 (#C7B377), then the text one character at a
+  time in `messageColor`, with emoji images between characters. When
+  `msgNameColor` is exactly 6776816 (#F06767) the text is drawn in the
+  default grey instead. Nothing in the text can change its colour, so a line
+  carries exactly two text colours: one for the sender part, one for the
+  text part. **Not established**: that the bottom-left feed draws through
+  `DrawChatMessage` (inference: the measured feed lines show a stamp and a
+  sender), the separator's exact characters for message type 0, and what a
+  click on a sender name in the opened chat window does offline.
+- **`ChatAddServerMessage(text, channel)` cannot carry a colour.** **Static
+  reading** (ForgePact#228): it passes the sender (measured `"SERVER"`), red
+  255 (#FF0000) as both the sender and the text colour, message type 1 and the
+  channel (default 0). That is why its line is red throughout.
+- **The online announcement's colours** (ForgePact#228). **Static reading**:
+  the ground item's closure calls `NetworkSendChatMessageIngame` with 18687
+  and a colour, and that sender passes 18687 (#FF4800, orange) as the sender
+  colour, the colour as the text colour, and message type 3; the sender name
+  comes from a protected-store read (which value is not established). The
+  text colour per rarity: Heroic (`"27"` 9) `GetRarityColor(9)` = 9764608
+  (#00FF94); Angelic (`"27"` 7, or tier `"32"` 6) a fixed 10681599
+  (#FFFCA2, pale yellow; the rarity table's Angelic is 10092542, § 16.4);
+  Unholy (`"27"` 10) a fixed 7224024 (#D83A6E), the same as
+  `GetRarityColor(10)`; a Satanic item (`"27"` 6) of tier `"32"` 5 (SS) takes
+  the Heroic branch with `GetRarityColor(6)` = 1447638 (#D61616). With type 3
+  the text is `GetItemDropMessage`'s: a `[Softcore] ` or `[Hardcore] ` tag,
+  the finder's name, the localized `just_found` phrase and the item's loot
+  name in square brackets, all in that one text colour. So online colours the
+  whole text, not only the item name.
 - **Offline, the player cannot type in chat**: the chat window opens and closes,
   but no line can be sent, so the call the game makes for a typed line was not
   observed. One `Ingame_Chat_obj` exists in a loaded game; `UI_Ingame_Chat_obj`
@@ -2099,6 +2151,18 @@ mostly screens that block play; `Enemy_Aggroable_obj` is the parent of exactly
   Unholy items; in Live procedure 3 it announced placed items, held a
   Satanic one, held a bag drop, and announced one natural drop with Magic
   Find raised.
+- **A coloured drop announcement: `ChatAddMessage` with its own sender and
+  colours** (ForgePact#228). **Measured** (dungeon chest Live procedure 1b,
+  shape 8): `ChatAddMessage` called by name with the local `Player_obj` as
+  `self`, sender `"ForgePact"`, both colours 0, message type and channel int64
+  0, two reals 0, a `[hh:mm]` stamp and six `undefined` showed
+  `[00:49] ForgePact : ForgePact chat test 8`; the line's colour was not
+  recorded. ForgePact#228 moves Loot announcements to this route
+  (`chatcolour`): sender part `<character> found` and text part the item name,
+  the sender in the grey 11974842 and the item name in the online
+  announcement's colour for its rarity (9764608, 10681599 or 7224024), with
+  the red `SERVER:` line as its fallback. The colours a player sees are
+  **not established** until that workorder's live session.
 
 [dungeon chest, Chat route](../ForgePact/docs/dungeon-chest-research.md#chat-route),
 [loot announcements, Static reading](../ForgePact/docs/loot-announcement-research.md#static-reading),
@@ -4954,6 +5018,32 @@ reads "Superior Ring", "Mythic Belt".
 
 Codes 4 and 8 were not observed. **Measured** on 7,628 drawn tooltips. Also in
 [`hs-game-sdk/curated/item_info.json`](../hs-game-sdk/curated/item_info.json).
+
+**The game's rarity colour table** (ForgePact#228). **Static reading**
+(2026-10-23, local Ghidra project, our own words): `GetRarityColor(code, a,
+b)` answers one colour per code, as GameMaker's blue-green-red integer, and
+white for any other code. `GetItemColor` gives an ordinary equipment item's
+name `GetRarityColor` of its `"27"`; other item kinds have branches of their
+own. Codes 4, 8 and 11 have colours but no item carrying them was observed.
+
+| Code | Rarity | Colour |
+|---|---|---|
+| 1 | Common | 16777215 (#FFFFFF); 10982553 (#9994A7) when `a` is non-zero, what `a` means not established |
+| 2 | Superior | 12745262 (#2E7AC2) |
+| 3 | Rare | 698851 (#E3A90A) |
+| 4 | not observed | 215270 (#E64803) |
+| 5 | Mythic | 15406513 (#B115EB) |
+| 6 | Satanic | 1447638 (#D61616) |
+| 7 | Angelic | 10092542 (#FEFF99) |
+| 8 | not observed | 1892620 (#0CE11C) |
+| 9 | Heroic | 9764608 (#00FF94) |
+| 10 | Unholy | 7224024 (#D83A6E) |
+| 11 | not observed | 7844807 (#C7B377) |
+
+The online drop announcement does not always use this table: its Angelic
+text is a fixed 10681599 (#FFFCA2), not 10092542 (§ 8.6). Also in
+[`hs-game-sdk/curated/loot_announcement_measurements.json`](../hs-game-sdk/curated/loot_announcement_measurements.json)
+(`rarity_colours`).
 
 ### 16.5 `itemDataHash` is not an identity
 
