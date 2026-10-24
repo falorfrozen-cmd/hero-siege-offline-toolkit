@@ -9339,14 +9339,20 @@ not observed, not absent.
   session no safety re-read found the worn charms changed without a call
   (`stale=0` in every stat), but only the right-click and room-change routes
   ran; dragging, a stash transfer and a load stay **not observed**.
-- By the time `UpdateCharmData` has returned after a right-click unequip,
-  `localCharmItemArray` already lacks the charm: ForgePact's cache read the
-  array at the first hooked call after each such call and again at each of
-  the next four frames' refreshes, and no later read found a different list
-  (`late=` +0 with `confirms=` +4 and `unconfirmed=` +0 on each of two
-  unequips). **Measured** (2026-10-24, ForgePact's Mod live 6, capture
+- At the first hooked call after `UpdateCharmData` returned on a right-click
+  unequip, `localCharmItemArray` already lacked the charm: ForgePact's cache
+  read the array there and again at each of the next four frames'
+  refreshes, and no later read found a different list (`late=` +0 with
+  `confirms=` +4 and `unconfirmed=` +0 on each of two unequips).
+  **Measured** (2026-10-24, ForgePact's Mod live 6, capture
   `forgepact-216-flight-followups-live-3`, `cache-late`, `dbg-ud-cache`);
-  only the right-click route was tried. The same session measured that the
+  only the right-click route was tried. Nothing sampled the array at
+  `UpdateCharmData`'s return itself, nor in the code that runs between it
+  and that next hooked call (the rest of `RunItemEquipped`, or any other
+  writer), so the array's state at the return rests on the **static
+  reading** above of `UpdateCharmData` pushing each worn charm onto the
+  array, not on this
+  measurement. The same session measured that the
   apparent late pick-up of Mod live 5 was not the array: its start point on
   the town ravine's north rim, (929, 1591) in `Town_01_rm`, overlaps the
   `Collision_Parent_obj` family (`place_meeting` there answers blocked), so
