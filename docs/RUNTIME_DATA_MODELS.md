@@ -9464,10 +9464,11 @@ not observed, not absent.
   direct calls too, on the game build whose executable's SHA-256 begins
   `498d588550d8`, with a `CheckTalentUse` control logging in both windows
   (about 75 hits a second). Other routes into the grid (dragging, a stash
-  transfer, a load, a room change) are **not observed**, so whether every
-  change to `localCharmItemArray` passes through `UpdateCharmData` is not
-  established; the decompiler's cross-references list no caller of it,
-  which is "not observed", not "none".
+  transfer, a load, a room change (since measured, next bullet)) are **not
+  observed**, so whether every change to `localCharmItemArray` passes
+  through `UpdateCharmData` is not established; no caller of it was found
+  on the drag, stash-transfer or save-load routes, which is "not observed",
+  not "none".
 - Counted again by ForgePact's own inline detour of `UpdateCharmData`
   (the worn-charm cache's `ucd:` counter, entered on direct calls too): two
   right-click equip changes gave `ucd:` +2 while a hardware logpoint on
