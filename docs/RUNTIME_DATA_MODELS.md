@@ -4291,7 +4291,10 @@ A monster that special content spawned carries a non-zero `specialType` in its s
   - **A second branch** credits `PickUpGoldCheck(hash, price, undefined, undefined, undefined, undefined)` and writes no gold log. Its condition was not read, so when a sale takes it is **not established**.
   - **What this confirms of the bullet above.** `GetItemInfo(key, default)` answers the item's `itemInfoStruct[key]` (§ 23.2), so the first factor is `itemInfoStruct["9"]`; this reading confirms the key 9, the multiplication and the rounding up (`ceil`). That the second factor is the stack count (`itemDefinitionStruct.o`, absent counting as 1) is AFK FARM's earlier reading and was **not re-read** here.
   - **`GenerateItemPrice`** reads the item's definition and its rarity code (a base of 15, 30, 50, 225 or 450 by rarity, 5 otherwise) and writes item info through `SetItemInfo`. Which key it writes is **not established**; key 9 is the natural guess.
-  - What this reading shows the sale changing: the gold balance (through `PickUpGoldCheck` only, as below), the UI gold log on the first branch, and the buyback list; how the sold item leaves the bag and what the unidentified last call does were not read, so this list is **not established** as complete. ForgePact's `autosell` (#196) mirrors the first branch's price, credit and log for a filter-hidden ground item by name and leaves the buyback list alone.
+  - What this reading shows the sale changing: the gold balance (through `PickUpGoldCheck` only, as below), the UI gold log on the first branch, and the buyback list; how the sold item leaves the bag and what the unidentified last call does were not read, so this list is **not established** as complete. ForgePact's `autosell` (#196) mirrors the first branch's price, credit and log for a filter-hidden ground item by name and leaves the buyback list alone. **Not yet measured**: Live 1 measured the price (below), but its build misread the credit's answer, so a by-name credit that pays the player has not been observed yet.
+  - **What the credit answers** (**static reading**, 2026-10-24, build `498d588550d8`, ForgePact #196, from the local decompile of `PickUpGoldCheck` #173 made): the script starts with its answer `undefined` and writes one in a single place, the hash-mismatch path, where it reports the client and answers `false`. Every other path returns with the answer still `undefined`, so a credit that passes the hash check answers `undefined`, never `true`; a caller that waits for `true` reads every good credit as refused. Both `GetCounterHash` and the check inside `PickUpGoldCheck` read the counter from the global protected store (`gDataProtected`), not from `self`, so the instance a caller passes as `self` does not decide the hash. An `undefined` third argument is replaced with 0, so the sale's two branches differ in that argument (1 against 0); what the argument means was not read, and neither was the rest of the body after the hash check (its online calls, the balance write). The gamba machine reads `GetGoldAmount` right after its own `PickUpGoldCheck` debit (§ 20.4, measured), so a caller can read the balance on either side of its call in the same frame and take the difference as what was paid.
+  - **The types the game will not buy** (**static reading**, same date and build): the translation key behind the line "Item cannot be sold" is `item_cannot_be_sold` (`bin\translationsAttributes.csv`), and its one use in the code is inside the tooltip script `DrawInventoryItemV2` (§ 16.6; found by a byte scan, since the imported project leaves that function unnamed). The tooltip takes the item's sale price from `GetItemInfo(9)`, sets it to 0 when the item's `itemType` is Key (12), Tarot (13), Material (14), Socketable (15) or Relic (16) (`HeroSiege::Items::ItemType::Key`, `Tarot`, `Material`, `Socketable`, `Relic`), and with a price of 0 draws "Item cannot be sold", under a condition on one of its arguments that was not identified (the merchant view is the natural reading). `itemType` sits on the item instance beside `itemDefinitionStruct` (§ 9.3). Whether the sale closure itself refuses the same five types is **not established** (it was not read; decompiling it times out). ForgePact's `autosell` follows the tooltip's rule and never sells these five types.
+  - **Measured** (2026-10-24, capture `forgepact-196-autosell-filtered-live-1`, ForgePact #196's Live 1, player build): a hand sale of a ring to the town merchant raised the balance by exactly `ceil(info 9 × 1)`, 57, the price `autosell quote` gave it; `GetGoldAmount`, called by name from the plugin, answered the balance the HUD showed; a Topaz x4 (Socketable) and a Destiny Shard (Material) both showed "Item cannot be sold", and the merchant would not take the Topaz. Live 1's build, before the type rule above, still quoted those two at 692 and 1350. [Auto-sell research](../ForgePact/docs/auto-sell-research.md)
 - **Gold** is account-wide, with separate pools for softcore, hardcore and Blood Pact (`hs2saves\shop.ini`, `[gold]`). The offline cap is 500,000,000.
   - `PickUpGoldCheck(GetCounterHash(), amount, …)` is the only call that changes the balance, both credits and debits. `GoldLogAdd` only writes the UI log.
   - AFK FARM's `worker pay` and `worker credit` (0.9) use `PickUpGoldCheck` with a fresh hash, one receipt per request. **Measured** 2026-09-25: a `worker credit` of 5,000 raised the balance by exactly 5,000.
@@ -4332,10 +4335,11 @@ yet known to be every credit. In our own words, with labels:
   two-argument UI-log writer (**static reading**, 2026-10-13). ForgePact's
   sensor accepts 1 to 4 arguments and counts the last one that decodes as a
   positive whole number (the producer's adaptive rule), so the amount at
-  index 1 is what it counts. The merchant sale's first branch logs through
-  it with argument 0 = 18 and the price at argument 1, so a vendor sale on
-  that branch reaches it; the second branch writes no gold log (**static
-  reading**, 2026-10-23, ForgePact #196, § 13.10 "The merchant sale").
+  index 1 is what it counts. The merchant sale's first branch calls it
+  with argument 0 = 18 and the price at argument 1, and the second branch
+  writes no gold log (**static reading**, 2026-10-23, ForgePact #196,
+  § 13.10 "The merchant sale"). Whether a hook or the sensor above sees
+  that call is not measured.
 - **`ExperienceUpdate`** takes **two arguments**; **argument 0** is the
   experience credited. A call the game refuses returns an explicit boolean
   `false`, and that call is not a gain. **The Tracker's reviewed code profile
@@ -5309,6 +5313,9 @@ content, never by the hash alone. **Measured.**
   writing them onto a rarity-6 item makes a state the game never makes.
   [Mark 1 Stats live 1 results](../ForgePact/docs/mark1-set-research.md#stats-live-1-results)
 - An unidentified item draws `Unidentified` and no stat lines.
+- The tooltip prices a Key, Tarot, Material, Socketable or Relic at 0 and
+  then shows "Item cannot be sold" (`item_cannot_be_sold`); the type rule
+  and its labels are in § 13.10 "The types the game will not buy".
 - All 344 direct call sites of `DrawInventoryStatsNew` in the build Ghidra
   imported (§ 19.7 names its hash) lie inside `DrawInventoryItemV2`, one after
   another. A fixed run of calls that long is the tooltip's list of known stat
