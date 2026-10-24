@@ -9015,7 +9015,7 @@ acceptance check passed and the route is `credit-route: paid`:
   `credit-unverified=0`, and `credit-refused=`, `credit-call-failed=`,
   `credit-false=`, `credit-unpaid=`, `gold-unreadable=`, `destroy-failed=`,
   `no-player=` and `errors=` all stayed 0. The sales came to 4,342 gold and
-  the balance rose 4,540 (coins picked up the rest). A shown drop
+  the balance rose 4,540 (the other 198 not attributed; coin pickups were not measured). A shown drop
   (`lootspawn 1`) stayed on the ground, `lootcensus` found no hidden item
   left, and the YYError count did not move.
 - Every `last=` answer was `undefined`, as the static reading says; with the
