@@ -9299,6 +9299,21 @@ not observed, not absent.
   (2031) and `GetItemFromFingerprint` (2046), as § 2 does for a relic, and
   pushes the item onto the array. Its direct callers are `RunItemEquipped`
   (3483) and a `Client_obj` closure. **Static reading** (2026-10-11).
+- `UpdateCharmData` runs once per equip change made by right-clicking a
+  charm between the bag and the charm grid, entered just after
+  `RunItemEquipped` is: two changes (Pocket Elf out of the grid, then back)
+  gave two hits of each, `RunItemEquipped`'s first each time. Over about 21 s
+  of standing and walking with no equip change, neither was entered.
+  **Measured** (2026-10-24, ForgePact's Mod live 4, capture
+  `forgepact-216-flight-followups-live-1`, `dbg-ucd-still`, `dbg-ucd-equip`,
+  `dbg-rie-equip`): hardware logpoints at each function's entry, which see
+  direct calls too, on the game build whose executable's SHA-256 begins
+  `498d588550d8`, with a `CheckTalentUse` control logging in both windows
+  (about 75 hits a second). Other routes into the grid (dragging, a stash
+  transfer, a load, a room change) are **not observed**, so whether every
+  change to `localCharmItemArray` passes through `UpdateCharmData` is not
+  established; the decompiler's cross-references list no caller of it,
+  which is "not observed", not "none".
 - So the equipped charms are read from `localCharmItemArray`, not through a
   worn slot's fingerprint as the Miner's Helmet's equipped read is. **Static
   reading** (2026-10-11).
@@ -9338,7 +9353,8 @@ not observed, not absent.
     **Inference** from the game reading this array, not measured.
 
 [Mod live 1 results](../ForgePact/docs/flight-charms-research.md#mod-live-1-results),
-[Mod live 2 results](../ForgePact/docs/flight-charms-research.md#mod-live-2-results)
+[Mod live 2 results](../ForgePact/docs/flight-charms-research.md#mod-live-2-results),
+[Mod live 4 results](../ForgePact/docs/flight-charms-research.md#mod-live-4-results)
 
 ### 23.2 Item size
 
