@@ -7578,6 +7578,16 @@ through the script table or a method value. The bullets that say
   **Measured** (2026-10-12, ForgePact's Mod live 1, `dbg-step-depth`,
   research DLL sha256
   `c15f85e1a79ccd7acfd3ad8d271605a4061182f6364a1d23c5c6096c1b2cd442`).
+- `UpdateDepth`'s own entry is reached while the player stands still in
+  town: over 2 s standing with the bag closed, a hardware logpoint there
+  logged 142 hits on 5 distinct instances (28 or 29 each, the
+  `CheckTalentUse` control 28), and over 2 s standing with the bag open after
+  a charm was right-clicked out of the charm grid, 202 hits on 11 (the same
+  5, and 6 others at 12 or 13 each). Which instance is the player was not
+  read. **Measured** (2026-10-24, ForgePact's Mod live 6, capture
+  `forgepact-216-flight-followups-live-3`, `dbg-ud-still`, `dbg-ud-bag`; the
+  entry carried ForgePact's detour, whose jump the game's own calls still
+  execute).
 - So the game rewrites the player's draw layer from the player's y during the
   player's own Step, and a draw order a mod sets before that call would not
   last past it. **Inference** from the readings above; that the calls run is
@@ -9465,6 +9475,58 @@ not observed, not absent.
   (2031) and `GetItemFromFingerprint` (2046), as § 2 does for a relic, and
   pushes the item onto the array. Its direct callers are `RunItemEquipped`
   (3483) and a `Client_obj` closure. **Static reading** (2026-10-11).
+- `UpdateCharmData` runs once per equip change made by right-clicking a
+  charm between the bag and the charm grid, entered just after
+  `RunItemEquipped` is: two changes (Pocket Elf out of the grid, then back)
+  gave two hits of each, `RunItemEquipped`'s first each time. Over about 21 s
+  of standing and walking with no equip change, neither was entered.
+  **Measured** (2026-10-24, ForgePact's Mod live 4, capture
+  `forgepact-216-flight-followups-live-1`, `dbg-ucd-still`, `dbg-ucd-equip`,
+  `dbg-rie-equip`): hardware logpoints at each function's entry, which see
+  direct calls too, on the game build whose executable's SHA-256 begins
+  `498d588550d8`, with a `CheckTalentUse` control logging in both windows
+  (about 75 hits a second). Other routes into the grid (dragging, a stash
+  transfer, a load, a room change (since measured, next bullet)) are **not
+  observed**, so whether every change to `localCharmItemArray` passes
+  through `UpdateCharmData` is not established; no caller of it was found
+  on the drag, stash-transfer or save-load routes, which is "not observed",
+  not "none".
+- Counted again by ForgePact's own inline detour of `UpdateCharmData`
+  (the worn-charm cache's `ucd:` counter, entered on direct calls too): two
+  right-click equip changes gave `ucd:` +2 while a hardware logpoint on
+  `RunItemEquipped` logged 2, so the two counts match one for one; a
+  right-click in the bag that left the charm grid as it was counted one
+  call too; and a waypoint round trip from town to the Outskirts of Inoya
+  and back, with no equip change, counted 4 (beside 4 new player
+  instances), so the game also runs `UpdateCharmData` on a room change.
+  **Measured** (2026-10-24, ForgePact's Mod live 5, capture
+  `forgepact-216-flight-followups-live-2`, `dbg-rie-equip`, `dbg-ucd-match`,
+  `cache-invalidate`, `cache-room`; same game build, with the
+  `CheckTalentUse` control logging through the debugger window). Over that
+  session no safety re-read found the worn charms changed without a call
+  (`stale=0` in every stat), but only the right-click and room-change routes
+  ran; dragging, a stash transfer and a load stay **not observed**.
+- At the first hooked call after `UpdateCharmData` returned on a right-click
+  unequip, `localCharmItemArray` already lacked the charm: ForgePact's cache
+  read the array there and again at each of the next four frames'
+  refreshes, and no later read found a different list (`late=` +0 with
+  `confirms=` +4 and `unconfirmed=` +0 on each of two unequips).
+  **Measured** (2026-10-24, ForgePact's Mod live 6, capture
+  `forgepact-216-flight-followups-live-3`, `cache-late`, `dbg-ud-cache`);
+  only the right-click route was tried. Nothing sampled the array at
+  `UpdateCharmData`'s return itself, nor in the code that runs between it
+  and that next hooked call (the rest of `RunItemEquipped`, or any other
+  writer), so the array's state at the return rests on the **static
+  reading** above of `UpdateCharmData` pushing each worn charm onto the
+  array, not on this
+  measurement. The same session measured that the
+  apparent late pick-up of Mod live 5 was not the array: its start point on
+  the town ravine's north rim, (929, 1591) in `Town_01_rm`, overlaps the
+  `Collision_Parent_obj` family (`place_meeting` there answers blocked), so
+  ForgePact's residual rule kept flight on after the unequip; a replay from
+  that spot stopped at the same place, and an unequip from a free spot 8 px
+  north was blocked at once (`residual-start`, `residual-replay`,
+  `equip-pickup`).
 - So the equipped charms are read from `localCharmItemArray`, not through a
   worn slot's fingerprint as the Miner's Helmet's equipped read is. **Static
   reading** (2026-10-11).
@@ -9504,7 +9566,10 @@ not observed, not absent.
     **Inference** from the game reading this array, not measured.
 
 [Mod live 1 results](../ForgePact/docs/flight-charms-research.md#mod-live-1-results),
-[Mod live 2 results](../ForgePact/docs/flight-charms-research.md#mod-live-2-results)
+[Mod live 2 results](../ForgePact/docs/flight-charms-research.md#mod-live-2-results),
+[Mod live 4 results](../ForgePact/docs/flight-charms-research.md#mod-live-4-results),
+[Mod live 5 results](../ForgePact/docs/flight-charms-research.md#mod-live-5-results),
+[Mod live 6 results](../ForgePact/docs/flight-charms-research.md#mod-live-6-results)
 
 ### 23.2 Item size
 
