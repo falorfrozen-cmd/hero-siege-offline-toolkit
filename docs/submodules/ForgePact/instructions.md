@@ -6810,7 +6810,7 @@ answered (in `equipped=`'s spelling), `fresh=` a read made for the line alone
 that touches neither the cache nor its counters (`unread` when it failed),
 and `agree=` whether the two match.
 
-**Verified.** Four sessions on the research build, all in
+**Verified.** Six sessions on the research build, all in
 `docs/flight-charms-research.md` § Phase 2: the mod. [Mod live 1](../../../ForgePact/docs/flight-charms-research.md#mod-live-1-results)
 (2026-10-12, DLL sha256
 `c15f85e1a79ccd7acfd3ad8d271605a4061182f6364a1d23c5c6096c1b2cd442` from
