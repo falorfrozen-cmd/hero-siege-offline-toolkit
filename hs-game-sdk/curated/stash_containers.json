@@ -201,28 +201,28 @@
     },
     "create": {
       "script": "gml_Script_UiCreateNode",
-      "index": 4469,
+      "index": 4494,
       "self_object": "UI_Stash_obj",
       "arguments": "x; y; the object index; the activation (undefined leaves activationFunc undefined); the call-stack name, stored as the node's uiNodeCallstack. Self and other the window that will own the node. Answers the node (visible 0 that frame, 1 the next)",
       "measured": "M"
     },
     "remove": {
       "script": "gml_Script_UiRemoveNode",
-      "index": 4461,
+      "index": 4486,
       "self_object": "UI_Stash_obj",
       "arguments": "the node; self the window that owns it. The window's own close destroys a node still in its list; a tab switch keeps it",
       "measured": "M"
     },
     "set_activation": {
       "script": "gml_Script_UiSetActivationFunc",
-      "index": 4463,
+      "index": 4488,
       "self_object": "UI_Stash_obj",
       "arguments": "the node; a script, bound as a method whose self is the node when callable, else activationFunc left undefined. A node bound to UiSetFloatingToFalse ended the game when clicked (that script is written for another object)",
       "measured": "M (the dispatch and the crash); the binding rule R"
     },
     "move": {
       "script": "gml_Script_UiMoveNode",
-      "index": 4475,
+      "index": 4500,
       "self_object": "UI_Stash_obj",
       "arguments": "the node; x; y. Sets both and runs the node's own position update",
       "measured": "R (not called live)"

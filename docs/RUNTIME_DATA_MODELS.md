@@ -373,7 +373,7 @@ for the full semantics.
 ### 5.3 `anon@N` closure names change with every game patch
 
 A Create-event closure is named after its character position in that event's
-source (`anon@6013@gml_Object_UI_Pause_obj_Create_0`), so any patch to the event
+source (`anon@5854@gml_Object_UI_Pause_obj_Create_0`), so any patch to the event
 renames every closure after the edit. Names recorded on an older build return
 "not found" on a newer one (measured on the prospect window, 2026-09-17; the
 special-content closures, 2026-09-18). Resolve a closure through the method
@@ -381,6 +381,34 @@ value an instance carries (`m_*`, below) rather than by its `anon@` name, and
 treat any `anon@N` in this document as that build's name.
 [prospect window, Scripts](../ForgePact/docs/prospect-window-research.md#scripts),
 [S10, Not (2026-09-18)](../ForgePact/docs/S10-special-content-notes.md#not-2026-09-18-anon-numaralari-bu-derlemeye-2026-09-03-ait)
+
+**The 7.0.13.0 to 7.0.14.0 renumbering** (static reading of the two
+executables, 2026-10-29, not checked in game except where ForgePact's guide
+says so). The compiled-code table YYToolkit reads at run time (one row per
+compiled function: name, code address, variables) is ordinary initialised data
+in the exe file, so it can be read without launching the game: 20,951 rows on
+7.0.13.0, the same count the frame profiler measured in game, and 20,980 on
+7.0.14.0. Across that patch every closure this toolkit names was renumbered.
+Grouping each closure with its siblings (same object or struct, closure number
+ignored), every group kept its member count, and wherever the closures' code
+differed enough to tell them apart, the order was unchanged too: the k-th
+closure of an object on 7.0.13.0 is the k-th on 7.0.14.0. Of the 185 renamed
+closures the hub and ForgePact spell, 38 are the only member of their group,
+118 were matched by a code fingerprint (direct calls to other compiled
+functions, referenced strings and size) that picked their rank partner by a
+clear margin, and 29 have siblings whose fingerprints tie, so for those the
+pairing rests on rank order alone; none of those 29 is compiled into
+ForgePact's player build. 26 more
+closures kept their names. Plain script indices moved as well (UiCreateNode,
+for one, went from 4469 to 4494); object, sprite, room and sound indices did
+not. The pairs, each with its evidence class, are in
+[`hs-game-sdk/curated/closure_renames_7_0_14_0.json`](../hs-game-sdk/curated/closure_renames_7_0_14_0.json),
+produced and checked by [`tools/closure_port_map.py`](../tools/closure_port_map.py)
+(how to run it after the next patch:
+[hs-game-sdk guide](submodules/hs-game-sdk/instructions.md#mapping-renamed-closures-after-a-game-patch)).
+Every closure name in this document and in ForgePact's docs now carries its
+7.0.14.0 spelling, including records of sessions that ran on 7.0.13.0; that
+map is the one place the old spellings are kept.
 
 The `m_*` names are instance variables holding method values; they are not
 assets, so `hs-game-sdk` does not list them and cannot generate them. The ones
@@ -2075,7 +2103,7 @@ mostly screens that block play; `Enemy_Aggroable_obj` is the parent of exactly
   into `msgItemData`, whose `GetItemColor` then becomes the text colour and
   whose tooltip shows on hover. `DrawChatMessage` (an `s_ChatMessageData`
   method, SDK name
-  `gml_Script_DrawChatMessage@anon@13887@s_ChatMessageData@DefineChatMessageData`,
+  `gml_Script_DrawChatMessage@anon@13546@s_ChatMessageData@DefineChatMessageData`,
   whose anon number moves per patch, § 5.3) draws, each with a black shadow:
   the time stamp in 8421504 (#808080), the sender in `msgNameColor`, platform
   badges, a separator in 7844807 (#C7B377), then the text one character at a
@@ -3097,7 +3125,7 @@ All **measured** (2026-09-10/11).
 - **The SDK script table lists a Create-event closure for the plain creator
   only, and the seven creator objects are unrelated to one another.** Of the
   seven, only `Enemy_Creator_obj` has a Create-event closure in the SDK script
-  table, `anon@886@gml_Object_Enemy_Creator_obj_Create_0` (the `anon@N` part
+  table, `anon@849@gml_Object_Enemy_Creator_obj_Create_0` (the `anon@N` part
   is patch-specific, §5.3); the Ambush, Ancient, Champion, Colossal Chest,
   Legion and Miniboss creators have none listed. That absence says nothing
   about whether the other six have Create events of their own; what they carry
@@ -5447,7 +5475,7 @@ the controls and the table are in the Item Editor's
 
 - Static reading (2026-10-04, our own words): `Loot_Ground_obj`'s Create event
   binds three methods on each ground item; the one SDK-named
-  `gml_Script_anon@1138@gml_Object_Loot_Ground_obj_Create_0` takes no
+  `gml_Script_anon@1084@gml_Object_Loot_Ground_obj_Create_0` takes no
   arguments and is the drop announcement (§8.6). The other two are the
   loot-filter closure (`anon@6032`) and the step dispatcher (`anon@11081`).
 - Static reading: it reads `self`'s item (`itemInstance`), then a struct
@@ -6171,7 +6199,7 @@ floor's fight and was detached), so those parts stay **not observed live**.
 - **Static reading: who bursts it.** `LootExplosion` has two direct callers
   (found by a byte scan for call sites, with positive controls, since the MCP
   callers table was empty): the closure SDK-named
-  `gml_Script_anon@1312@gml_Object_Spawn_Next_obj_Create_0`, which reads
+  `gml_Script_anon@1278@gml_Object_Spawn_Next_obj_Create_0`, which reads
   `chaosTowerFloorFinished`, `chaosTowerIsLastFloor`, `chaosTowerFloor`,
   `chaosTowerFloorList`, `nextFloorType` and `nextFloorNumber` (so the burst
   comes when a floor is finished), and `WormholeGiveReward`. Whether a
@@ -6992,7 +7020,7 @@ names are the stats' tooltip names (the Item Editor's game-verified stat table).
   lives in `gDataProtected`. Inside, it reads category 15's repository entries,
   `GetDropRate` and a `gDataProtected` member, floors a value and rolls.
   `GetDropRate`, a method of the item base definition
-  (`gml_Script_GetDropRate_anon_55737_s_ItemBaseDefinition_DefineStructs`
+  (`gml_Script_GetDropRate_anon_54262_s_ItemBaseDefinition_DefineStructs`
   (1058), a closure name that moves with every patch, §5.3), answers
   `droprate.base`, replaced by a per-place field where the entry carries one and
   the room matches: boss dungeons, Chaos Tower, Niflheim, rifts, Ruby, Sheep,
@@ -8241,7 +8269,7 @@ was first measured in Live 3, on a machine the game placed itself (§ 20.4).
   search.**
 - Its events are `Create_0`, `Alarm_0`, `Alarm_9`, `Step_0`, `Draw_0`,
   `Draw_64` and `CleanUp_0`, plus one Create closure,
-  `gml_Script_anon_1474_gml_Object_Slot_Machine_01_obj_Create_0` (5343; the
+  `gml_Script_anon_1401_gml_Object_Slot_Machine_01_obj_Create_0` (5343; the
   name moves with every patch, §5.3). `Collision_Prop_obj` owns a `Create_0`
   and an `Alarm_11`; the two parents above it own a `Create_0` only. **Static
   reading.**
@@ -8712,7 +8740,7 @@ direct `call rel32` that the import's reference table does not hold.
   `itemSprite` read undefined (§ 18.4, **measured**).
 - Stacking: `gml_Script_ItemsAreStackable` (1923) needs both items defined,
   consults the first item's `GetItemInfo` method (a closure, in `hs-game-sdk`
-  as `gml_Script_GetItemInfo_anon_5277_s_ItemInstanceStruct_InventoryV2Funcs`
+  as `gml_Script_GetItemInfo_anon_5117_s_ItemInstanceStruct_InventoryV2Funcs`
   (2035), a name that moves with every patch, §5.3), which can answer false
   for reasons not read, and then answers true only when the two items'
   `itemType` match and their `itemDefinitionStruct`'s `b` and `c` match. The
@@ -9574,7 +9602,7 @@ not observed, not absent.
 ### 23.2 Item size
 
 - `gml_Script_GetItemSize` (1976) calls the item's own `GetItemInfo` method
-  (2035, `GetItemInfo@anon@5277@s_ItemInstanceStruct@InventoryV2Funcs`)
+  (2035, `GetItemInfo@anon@5117@s_ItemInstanceStruct@InventoryV2Funcs`)
   twice, each time with a constant key and one shared default, and returns
   the two answers as a pair: the item's footprint in grid cells. **Static
   reading** (2026-10-11).

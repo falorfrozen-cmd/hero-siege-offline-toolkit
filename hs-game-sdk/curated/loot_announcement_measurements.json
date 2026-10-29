@@ -32,7 +32,7 @@
   ],
   "scripts": [
     {
-      "name": "gml_Script_anon@1138@gml_Object_Loot_Ground_obj_Create_0",
+      "name": "gml_Script_anon@1084@gml_Object_Loot_Ground_obj_Create_0",
       "role": "the announcement closure bound on each Loot_Ground_obj; no arguments; reads the item's rarity and branches per rarity",
       "status": "static_reading"
     },
@@ -89,7 +89,7 @@
       "rarity": "Heroic",
       "branch": "the closure's own branch for 9",
       "announced_online": "not_established",
-      "decided_by": "the closure itself (gml_Script_anon@1138@gml_Object_Loot_Ground_obj_Create_0); gml_Script_GetRareDropAnnouncement was not read answering true for 9",
+      "decided_by": "the closure itself (gml_Script_anon@1084@gml_Object_Loot_Ground_obj_Create_0); gml_Script_GetRareDropAnnouncement was not read answering true for 9",
       "status": "static_reading",
       "note": "the branch is a static reading; whether that branch announces a Heroic drop online was not read, and what the closure does after a false GetRareDropAnnouncement answer depends on a value whose meaning is not established (the same position as Satanic). ForgePact announces it (the owner's scope)"
     },
@@ -196,7 +196,7 @@
       "note": "the fields named in the reading, not the full list"
     },
     "delivery": "added to every UI_Chat_List_obj list of its channel (not a message type 3 line while chatShowItemDropMessages is off), and to the in-game feed (IngameChatFeedAddLatest) only when the channel is -1 or enableGeneralChat is on",
-    "draw_script": "gml_Script_DrawChatMessage@anon@13887@s_ChatMessageData@DefineChatMessageData (the anon number moves per patch, docs/RUNTIME_DATA_MODELS.md section 5.3)",
+    "draw_script": "gml_Script_DrawChatMessage@anon@13546@s_ChatMessageData@DefineChatMessageData (the anon number moves per patch, docs/RUNTIME_DATA_MODELS.md section 5.3)",
     "segments": [
       {
         "part": "time stamp",
@@ -360,7 +360,7 @@
         "status": "static_reading"
       },
       {
-        "name": "gml_Script_anon@1312@gml_Object_Spawn_Next_obj_Create_0",
+        "name": "gml_Script_anon@1278@gml_Object_Spawn_Next_obj_Create_0",
         "role": "direct caller of LootExplosion; reads chaosTowerFloorFinished, chaosTowerIsLastFloor, chaosTowerFloor, chaosTowerFloorList, nextFloorType and nextFloorNumber, so the burst comes when a floor is finished",
         "status": "static_reading"
       },
@@ -384,7 +384,7 @@
       }
     ],
     "reset": {
-      "name": "gml_Script_anon@16838@gml_Object_Controller_obj_Create_0",
+      "name": "gml_Script_anon@16294@gml_Object_Controller_obj_Create_0",
       "role": "clears lootExplosionList and resets lootExplosionGold, chaosTowerFloor, chaosTowerSpawnZone, chaosTowerStarted, chaosTowerBossState, lootExplosionGiven (false) and chaosTowerRift",
       "status": "static_reading",
       "note": "that it is what m_ChaosTowerReset holds is an inference"

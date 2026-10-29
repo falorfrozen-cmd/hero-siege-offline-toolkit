@@ -618,7 +618,12 @@ import { GameObject, GameScripts, StatId, ItemType } from '@hero-siege/sdk';
 
 | Command | Working Directory | Purpose | Verification Status |
 | --- | --- | --- | --- |
-| `py -3 tools/extract_and_generate_sdk.py --game-bin "<path-to-game-bin>"` | Workspace Root | Re-extract symbols from `data.win` and regenerate all SDK bindings | Verified 2026-09-17 (hub `4539e68`, `data.win` `07D864C91EFE…`, default game path; idempotent) |
+| `py -3 tools/extract_and_generate_sdk.py --game-bin "<path-to-game-bin>"` | Workspace Root | Re-extract symbols from `data.win` and regenerate all SDK bindings | Verified 2026-10-29 on game 7.0.14.0 (hub `c08e265`, default game path; `data.win` sha256 `7d66e5b5f579…`, vanilla `Hero_Siege.exe` sha256 `2c248a580810…`; idempotent: re-run after that commit, it left `git status` clean under `hs-game-sdk/` outside `curated/`). `data/manifest.json`'s `exe_sha256` is whatever exe is installed, so after ForgePact's Install it is the Aurie-patched one (`b364843e3763…` that day), not the vanilla hash. Earlier: 2026-09-17 (hub `4539e68`, `data.win` `07D864C91EFE…`) |
+| `py -3 tools/closure_port_map.py table <exe> [--name <full name>]` | Workspace Root | Read an exe's compiled-code table from the file (no game launch): prints `rows=`, `file_version=`, `sha256=`, and with `--name` that function's `rva=`; exits 1 when the name is absent | Verified 2026-10-29 (7.0.14.0: `rows=20980`; 7.0.13.0: 20,951) |
+| `py -3 tools/closure_port_map.py map --old-exe <old> --new-exe <new> --scan . --scan ForgePact --exclude ".claude/**" --out <json>` | Workspace Root | Pair every closure the hub and ForgePact spell with its new-build name, each with its evidence class (see "Mapping renamed closures after a game patch" below). Refuses, writing nothing, on a conflict or a sibling group whose size changed | Verified 2026-10-29 (7.0.13.0 → 7.0.14.0: 185 rows, 0 conflicts; `hs-game-sdk/curated/closure_renames_7_0_14_0.json`) |
+| `py -3 tools/closure_port_map.py verify <json> --old-exe <old> --new-exe <new>` | Workspace Root | Recompute every row of a committed map; exits 0 only with both exe hashes matching the header and 0 conflicts, 0 mismatches | Verified 2026-10-29 (`sha256=match`, `conflicts=0`, `mismatches=0`, about 1 s) |
+| `py -3 tools/closure_port_map.py rewrite <json> <path>... [--exclude <glob>]` | Workspace Root | Replace each old spelling (full name, short name, C++/Python identifier) with the new one in the git-tracked text files under each path, all rows in one pass, every other byte (CRLF included) kept | Verified 2026-10-29 (hub: 7 files, 21 replacements) |
+| `py -3 tools/closure_port_map.py check <json> <path>... [--exclude <glob>]` | Workspace Root | List every old spelling still present that the new build does not have, then `stale=<n>`; exits 1 when n > 0. Skips the map file itself | Verified 2026-10-29 (hub after its rewrite: `stale=3`, all three in `tests/test_closure_port_map.py`, whose old-exe controls name 7.0.13.0 closures; `stale=0` with that file excluded) |
 | `py -3 tools/generate_satanic_zone_sdk.py` | Workspace Root | Regenerate `satanic_zone.py`/`.hpp`/`.ts` from `hs-game-sdk/curated/satanic_zone.json` (hand-edited, not extracted) | Verified 2026-09-10 |
 | `py -3 -m unittest discover -s tests` | Workspace Root | Run the SDK test suite. Passes in a clean checkout; extraction- and compiler-dependent suites skip (see below) | Verified 2026-09-12 |
 | `py -3 -m unittest tests.test_cpp_sdk -v` | Workspace Root | Compile and run the C++ relic/hook behavioural tests against the stubbed YYToolkit surface | Verified 2026-09-12 |
@@ -652,6 +657,7 @@ contributor can be assumed to have:
 | `test_sdk_lazy_import.py` | nothing (starts fresh interpreters of the Python running the suite) | always runs |
 | `test_item_type_parity.py` | nothing (parses the tracked bindings and this guide); `node` for the executed-TypeScript sub-test | always runs; only `test_executed_enum_matches_python` skips, when `node` is missing from `PATH` or older than 22.7 (no `--experimental-transform-types`); `TestGuideRecordsTheMeasuredRow` checks this guide's ItemType table names only row 14 as "measured in-game" |
 | `test_curated_stash_containers.py` | nothing (reads the tracked `curated/stash_containers.json`, the SDK and `docs/RUNTIME_DATA_MODELS.md`) | always runs |
+| `test_closure_port_map.py` | nothing (synthetic builds and the committed map); both game executables for `ExeTests` | always runs; only `ExeTests` skips, when the 7.0.13.0 or 7.0.14.0 exe copy is absent |
 
 `test_extractor_layout.py` is how the OBJT offsets stay verifiable without the
 game: it writes a tiny GameMaker IFF file by hand, with each field at its
@@ -663,6 +669,54 @@ by `tests/cpp/stubs/`. Because the SDK detects YYToolkit with
 `__has_include(<YYToolkit/YYTK_Shared.hpp>)`, putting the stubs on the include
 path is enough to compile the real code paths and drive them with controlled
 responses - no Aurie runtime, no DLL in the game, no live game.
+
+### Mapping renamed closures after a game patch
+
+A game patch renumbers anonymous closures (`anon@N`, `___struct___N`; see
+`docs/RUNTIME_DATA_MODELS.md` § 5.3), so the regenerated bindings drop the old
+spellings and every C++ constant, research table and doc that used one stops
+resolving. `tools/closure_port_map.py` (stdlib only) pairs the old names with
+the new ones from the two executables' compiled-code tables, without launching
+the game. What to do, in order:
+
+1. **Before Steam updates the game**, copy the current `Hero_Siege.exe` to a
+   plain path outside the game folder (the 7.0.13.0 copy is
+   `%USERPROFILE%\tools\hs-bin\Hero_Siege.exe`, an Aurie-patched one; the
+   table reads the same from a patched or a vanilla exe). Once the update
+   lands the old build is gone from the machine, and no map can be made
+   without it.
+2. After the update, copy the new exe to its own plain path as well (Install
+   patches the installed one, and Ghidra's headless launcher cannot take a
+   path containing `(x86)`), then regenerate the SDK with
+   `extract_and_generate_sdk.py`.
+3. `map --old-exe <old> --new-exe <new> --scan . --scan ForgePact --exclude
+   ".claude/**" --out hs-game-sdk/curated/closure_renames_<new version>.json`.
+   Commit the map; it is the one tracked file allowed to keep the old
+   spellings.
+4. `verify` the map against both exes, then `rewrite` each repository
+   (`. --exclude ".claude/**"`, and `ForgePact`). Fix by hand what a token
+   match cannot see: truncated labels, a bare `anon@N` a test asserts, prose
+   that explains a number, and negative controls built on a deliberately wrong
+   name (give those a number neither build has).
+5. `check` both repositories until it prints `stale=0`, then build and run the
+   suites. A name `check` cannot flag is one that still exists in the new
+   build but now names a different closure (on 7.0.14.0, one of `SaveStash`'s
+   `___struct___` closures); the map's `name_survives` column marks those, so
+   `rewrite` handles them and `check` need not.
+
+What each row's `evidence` means:
+
+| Evidence | Meaning | How much to trust it |
+| --- | --- | --- |
+| `name-unique` | The closure is the only member of its group (same name with the closure numbers blanked) in both builds | As good as a name lookup |
+| `fingerprint-unique` | Its code fingerprint (direct calls to other compiled functions, referenced strings, size) matched its rank partner better than any sibling by at least the margin (0.05) | Strong; still a static reading |
+| `rank-order-fingerprint-tie` | Two or more siblings have identical fingerprints, so the pairing is the k-th closure of the old group to the k-th of the new one | Rank order only. Treat it as unverified until a live session or a decompile of both builds separates the siblings |
+| `rank-order-no-fingerprint` | No fingerprint could be taken (a leaf function with no extent found) | Rank order only, as above |
+
+`map` refuses rather than guessing: a sibling that outscores the rank partner
+by more than the margin, or a group whose member count changed, exits 1 and
+writes nothing. The 7.0.13.0 → 7.0.14.0 map had 0 of either; its counts are in
+the map's header and in § 5.3.
 
 ---
 
