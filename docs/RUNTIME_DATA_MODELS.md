@@ -388,7 +388,8 @@ says so). The compiled-code table YYToolkit reads at run time (one row per
 compiled function: name, code address, variables) is ordinary initialised data
 in the exe file, so it can be read without launching the game: 20,951 rows on
 7.0.13.0, the same count the frame profiler measured in game, and 20,980 on
-7.0.14.0. Across that patch every closure this toolkit names was renumbered.
+7.0.14.0. Across that patch all but 26 of the closures this toolkit names were
+renumbered.
 Grouping each closure with its siblings (same object or struct, closure number
 ignored), every group kept its member count, and wherever the closures' code
 differed enough to tell them apart, the order was unchanged too: the k-th
@@ -398,7 +399,7 @@ closures the hub and ForgePact spell, 38 are the only member of their group,
 functions, referenced strings and size) that picked their rank partner by a
 clear margin, and 29 have siblings whose fingerprints tie, so for those the
 pairing rests on rank order alone; none of those 29 is compiled into
-ForgePact's player build. 26 more
+ForgePact's player build. The other 26
 closures kept their names. Plain script indices moved as well (UiCreateNode,
 for one, went from 4469 to 4494); object, sprite, room and sound indices did
 not. The pairs, each with its evidence class, are in
@@ -408,7 +409,10 @@ produced and checked by [`tools/closure_port_map.py`](../tools/closure_port_map.
 [hs-game-sdk guide](submodules/hs-game-sdk/instructions.md#mapping-renamed-closures-after-a-game-patch)).
 Every closure name in this document and in ForgePact's docs now carries its
 7.0.14.0 spelling, including records of sessions that ran on 7.0.13.0; that
-map is the one place the old spellings are kept.
+map is the one place the old spellings are kept. That covers bare numbers in
+prose (`Loot_Ground_obj`'s `anon@1084`), which were rewritten by hand from the
+map: the tool's `check` matches only a closure's full name, short name and
+identifier, so its `stale=0` does not show that a bare `anon@N` was ported.
 
 The `m_*` names are instance variables holding method values; they are not
 assets, so `hs-game-sdk` does not list them and cannot generate them. The ones
@@ -909,8 +913,8 @@ Shout and Berserk add theirs outside it.
   `UiATalentScreenResetTalents` (self the `UI_Button_Small_obj`) and its
   confirm dialog (`UI_Character_Reset_obj`) runs `ClearPersistSkill` with
   `a0=1`. Undoing a level or a node (right-click) runs the Create closures
-  `UI_Button_Talent_Player_obj anon@23904` and `UI_Button_Subtalent_obj
-  anon@2428` (the latter then `ClearPersistSkill`).
+  `UI_Button_Talent_Player_obj anon@23516` and `UI_Button_Subtalent_obj
+  anon@2350` (the latter then `ClearPersistSkill`).
 - M: the talent screen opens through **`UiAOpenTalents`**, self = other =
   `Profile_Manager_obj`, two arguments `1, 1`; plain `UiCreate` does not fire.
   Called by name with that shape it opens the screen as the key T does. T
@@ -2690,13 +2694,14 @@ bag file is **not established**; the tracker producer is ruled out (#201).
 [prospect window, Stage C results](../ForgePact/docs/prospect-window-research.md#stage-c-results),
 [Stage D results](../ForgePact/docs/prospect-window-research.md#stage-d-results)
 
-### 9.8 Closures on the 2026-09-17 build
+### 9.8 Prospect and inventory-grid closures
 
-`UI_Prospect_obj`: `anon@1065` = `m_SetInventoryLocalPlayer`, `anon@2806` =
-`m_Resize`, `anon@3657` = `m_UpdateInventoryGrid`. `UI_Inventory_Grid_obj`:
-`anon@36159` = `m_RefreshNode`, `anon@15345` = `m_MoveItemToGrid`, `anon@8881` =
-`m_DropItem`, `anon@34555` = `m_StartInvDragging`. Measured by resolving the live
-method values; see §5.3 before using a number.
+`UI_Prospect_obj`: `anon@1038` = `m_SetInventoryLocalPlayer`, `anon@2729` =
+`m_Resize`, `anon@3551` = `m_UpdateInventoryGrid`. `UI_Inventory_Grid_obj`:
+`anon@35172` = `m_RefreshNode`, `anon@14878` = `m_MoveItemToGrid`, `anon@8601` =
+`m_DropItem`, `anon@33615` = `m_StartInvDragging`. Measured on the 2026-09-17
+build by resolving the live method values; the numbers are their 7.0.14.0
+partners from §5.3's map. See §5.3 before using a number.
 
 ---
 
@@ -4314,7 +4319,7 @@ A monster that special content spawned carries a non-zero `specialType` in its s
 - **Selling to a vendor pays** the item's info value 9 × the stack, rounded up. Materials are worth a token 10, runes and gems 125-381, most keys 15-5,000. **Static reading.**
 - **The merchant sale** (**static reading**, 2026-10-23, build `498d588550d8`, ForgePact #196), in our own words:
   - **No script whose name mentions merchant, vendor, shop, sell, buyback, price or value sells an item** (a script under another name was not ruled out). Every SDK script whose name mentions merchant, vendor, shop, sell, buyback, price or value was checked, and each is something else: `CallbackMerchantSellPoolExit` and `CallbackMerchantSellPoolResetGold` handle an online API answer (they decrypt and hash it); `GetMerchantPrice` is a fixed table of 174 names to values, not an item's sale price; `GetItemBuyPrice` belongs to buying from the merchant (it sits beside a purchase's gold checks); the `UiAMarket*` scripts are the player market.
-  - **The sale is one branch of a UI closure**: `UI_Inventory_Grid_obj`'s `m_MoveItemToGrid` (§ 9.8 lists it on the 2026-09-17 build; its `anon@N` name moves with every patch, § 5.3), taken when an item is moved into the merchant's grid. The closure takes the item from the drag state, not from an argument ([stash move research](../ForgePact/docs/stash-move-research.md), § Static reading), so a ground item cannot be handed to it.
+  - **The sale is one branch of a UI closure**: `UI_Inventory_Grid_obj`'s `m_MoveItemToGrid` (§ 9.8 lists it; its `anon@N` name moves with every patch, § 5.3), taken when an item is moved into the merchant's grid. The closure takes the item from the drag state, not from an argument ([stash move research](../ForgePact/docs/stash-move-research.md), § Static reading), so a ground item cannot be handed to it.
   - **What the sale does** (not call by call): it checks the item's hash, records the item on the merchant's buyback / sell pool (`sellPoolFingerprintList`), prices it at the item's info value 9 times a second factor rounded up, credits that price through `PickUpGoldCheck` with the third argument set to 1, and writes the UI gold log (§ 13.11, type 18). A further call that looks like a sound was not identified. A second branch credits the price with the third argument left undefined (0, see below) and writes no gold log. Its condition was not read, so when a sale takes it is **not established**.
   - **What this confirms of the bullet above.** `GetItemInfo(key, default)` answers the item's `itemInfoStruct[key]` (§ 23.2), so the first factor is `itemInfoStruct["9"]`; this reading confirms the key 9, the multiplication and the rounding up (`ceil`). That the second factor is the stack count (`itemDefinitionStruct.o`, absent counting as 1) is AFK FARM's earlier reading and was **not re-read** here.
   - **`GenerateItemPrice`** reads the item's definition and its rarity code (a base of 15, 30, 50, 225 or 450 by rarity, 5 otherwise) and writes item info through `SetItemInfo`. Which key it writes is **not established**; key 9 is the natural guess.
@@ -5477,7 +5482,7 @@ the controls and the table are in the Item Editor's
   binds three methods on each ground item; the one SDK-named
   `gml_Script_anon@1084@gml_Object_Loot_Ground_obj_Create_0` takes no
   arguments and is the drop announcement (§8.6). The other two are the
-  loot-filter closure (`anon@6032`) and the step dispatcher (`anon@11081`).
+  loot-filter closure (`anon@5880`) and the step dispatcher (`anon@10795`).
 - Static reading: it reads `self`'s item (`itemInstance`), then a struct
   inside it and one key of that struct, and compares the value with 7, 10, 9
   and 6 on separate branches, which are the rarity codes of §16.4; the key
@@ -5505,7 +5510,7 @@ the controls and the table are in the Item Editor's
   `Pickup_Parent_obj`'s Create event; the other three could not be named in
   either session. Not established: which function each of those three holds,
   and so whether `m_AngelicMessage`, the one named for an announcement, is the
-  variable that holds `anon@1138`. It is the name a next attempt at the game's
+  variable that holds `anon@1084`. It is the name a next attempt at the game's
   own path would start from.
 - The chain, the rarity key and the codes the closure branches on are also in
   [`hs-game-sdk/curated/loot_announcement_measurements.json`](../hs-game-sdk/curated/loot_announcement_measurements.json),
@@ -6206,7 +6211,7 @@ floor's fight and was detached), so those parts stay **not observed live**.
   Wormhole reward uses the same held list is **not established**. That the
   burst comes at a floor's end is **measured** (above); which caller ran is
   not.
-- **Static reading: the reset.** `Controller_obj`'s closure `anon@16838`
+- **Static reading: the reset.** `Controller_obj`'s closure `anon@16294`
   clears `lootExplosionList` and resets `lootExplosionGold`,
   `chaosTowerFloor`, `chaosTowerSpawnZone`, `chaosTowerStarted`,
   `chaosTowerBossState`, `lootExplosionGiven` (to false) and
