@@ -407,9 +407,10 @@ not. The pairs, each with its evidence class, are in
 produced and checked by [`tools/closure_port_map.py`](../tools/closure_port_map.py)
 (how to run it after the next patch:
 [hs-game-sdk guide](submodules/hs-game-sdk/instructions.md#mapping-renamed-closures-after-a-game-patch)).
-Every closure name in this document and in ForgePact's docs now carries its
-7.0.14.0 spelling, including records of sessions that ran on 7.0.13.0; that
-map is the one place the old spellings are kept. That covers bare numbers in
+Every closure name in this document and in ForgePact's docs that describes
+current behaviour carries its 7.0.14.0 spelling; records of sessions that ran
+on 7.0.13.0 keep the old number, labelled 7.0.13.0 with the 7.0.14.0 one in
+brackets, and that map is the complete record of old spellings. That covers bare numbers in
 prose (`Loot_Ground_obj`'s `anon@1084`), which were rewritten by hand from the
 map: the tool's `check` matches only a closure's full name, short name and
 identifier, so its `stale=0` does not show that a bare `anon@N` was ported.
