@@ -1687,8 +1687,11 @@ class WatchdogTests(SessionMixin, unittest.TestCase):
 
     def test_tls_storm_attach_is_running_only_once_settled(self):
         # x64dbg's TLS-callback breakpoints pause the game right after attach;
-        # the keeper resumes each, and no attach break is waited for.
-        cfg, _, state, record, _ = self.start_session(fake={"tls_breaks": 3})
+        # the keeper resumes each, and no attach break is waited for. Three
+        # resume cycles on a loaded CI runner outlasted the default 10 s ready
+        # window (#573), so this test alone gets a longer one.
+        cfg, _, state, record, _ = self.start_session(cfg_over={"ready_timeout": 30},
+                                                      fake={"tls_breaks": 3})
         self.assertEqual((state["state"], state["ready"]), ("running", True), state)
         self.assertEqual(state["breaks_resumed"], 3, state)
         self.assertEqual(state["x64dbg_state"], "running")
