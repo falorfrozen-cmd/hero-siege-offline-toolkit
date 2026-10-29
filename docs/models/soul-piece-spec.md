@@ -198,7 +198,7 @@ in `RUNTIME_DATA_MODELS.md` § 21.3.
   entries of category 15 (socketables), each one's `GetDropRate` answer and a
   `gDataProtected` member, floors a value and rolls.
 - **`GetDropRate`** (a method of the item base definition, in the SDK as
-  `gml_Script_GetDropRate_anon_55737_s_ItemBaseDefinition_DefineStructs`, a
+  `gml_Script_GetDropRate_anon_54262_s_ItemBaseDefinition_DefineStructs`, a
   closure name that moves with every patch) answers the entry's
   `droprate.base`, replaced by a per-place field where the entry carries one and
   the room matches: boss dungeons, Chaos Tower, Niflheim, rifts, Ruby, Sheep,

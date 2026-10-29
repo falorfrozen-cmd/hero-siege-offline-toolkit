@@ -986,7 +986,7 @@ class CuratedTests(unittest.TestCase):
                      "gml_Script_PotionUse", "gml_Script_InvGridClearItemNode",
                      "gml_Script_NetworkRoomGoto", "gml_Script_RoomGoto",
                      "gml_Script_ZoneStateExists", "gml_Script_ZoneStateResetSingle",
-                     "gml_Script_GetDropRate_anon_55737_s_ItemBaseDefinition_DefineStructs"):
+                     "gml_Script_GetDropRate_anon_54262_s_ItemBaseDefinition_DefineStructs"):
             with self.subTest(name=name):
                 self.assertTrue(hasattr(GameScript, name))
 

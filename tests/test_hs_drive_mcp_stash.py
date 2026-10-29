@@ -322,7 +322,7 @@ class StashTabTests(StashBase):
     def test_socketable_through_its_closure(self):
         self.use({TAB_READ: [TAB_START],
                   "stashtab -2": [frame("stashtab: before=0 after=-2 "
-                                        "handler=anon@1018@gml_Object_UI_Stash_Tab_Bar_Container_obj_Create_0")],
+                                        "handler=anon@988@gml_Object_UI_Stash_Tab_Bar_Container_obj_Create_0")],
                   WINDOW_READ: [derived(stash_tab=-2)]})
         result = self.tab("socketable")
         self.assertEqual((result["ok"], result["selected_after"]), (True, -2), result)

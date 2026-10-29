@@ -8,7 +8,7 @@
       "date": "2026-10-04",
       "source": [{"path": "ForgePact/docs/gamba-machine-research.md", "section": "Static reading"}],
       "objects": ["Slot_Machine_01_obj", "Collision_Prop_obj", "Collision_Parent_obj", "Avoidable_Parent_obj"],
-      "scripts": ["gml_Script_anon_1474_gml_Object_Slot_Machine_01_obj_Create_0"],
+      "scripts": ["gml_Script_anon_1401_gml_Object_Slot_Machine_01_obj_Create_0"],
       "what": "The gamba machine is an object whose logic is in its events, not a named script. Its parent chain is Collision_Prop_obj -> Collision_Parent_obj -> Avoidable_Parent_obj; Collision_Prop_obj owns a Create_0 and an Alarm_11, the two above it a Create_0 only.",
       "values": {
         "object_index": 4644,
