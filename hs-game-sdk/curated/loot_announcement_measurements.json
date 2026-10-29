@@ -155,7 +155,7 @@
       "chosen": "2026-10-04",
       "session": "ForgePact#17 Live procedure 3",
       "sink": "ChatAddServerMessage by name with '<character> found <item name>' (itemInfoStruct[\"28\"], the player's name), the red SERVER: line",
-      "why": "the game's own path (method, the anon@1138 closure) was not reachable to test this session: the probe's anon control did not resolve (`anon rows resolved: 0 of 2`, instrument-blind), so whether the closure is bound on the ground item is not established; server ships per the owner's rule (route-method-2 not pass). Since ForgePact#228 it is chatcolour's fallback."
+      "why": "the game's own path (method, the anon@1084 closure) was not reachable to test this session: the probe's anon control did not resolve (`anon rows resolved: 0 of 2`, instrument-blind), so whether the closure is bound on the ground item is not established; server ships per the owner's rule (route-method-2 not pass). Since ForgePact#228 it is chatcolour's fallback."
     }
   },
   "chat_line": {
